@@ -6,6 +6,9 @@ set +x
 cd "$(dirname "$0")/.."
 
 SEPOLIA_RPC_URL="${SEPOLIA_RPC_URL:-https://ethereum-sepolia-rpc.publicnode.com}"
+# Explicitly bump fees above stale low-fee transactions in the Sepolia mempool.
+TX_MAX_FEE_PER_GAS="${TX_MAX_FEE_PER_GAS:-10000000}"
+TX_PRIORITY_FEE_PER_GAS="${TX_PRIORITY_FEE_PER_GAS:-5000000}"
 if [[ -z "${DEPLOYER_PRIVATE_KEY:-}" ]]; then
   echo "Set DEPLOYER_PRIVATE_KEY in the environment; do not put it in Git." >&2
   exit 1
@@ -34,6 +37,8 @@ deploy_contract() {
       --rpc-url "$SEPOLIA_RPC_URL" \
       --private-key "$KEY" \
       --gas-limit "$gas_limit" \
+      --gas-price "$TX_MAX_FEE_PER_GAS" \
+      --priority-gas-price "$TX_PRIORITY_FEE_PER_GAS" \
       --timeout 60 \
       --broadcast \
       --constructor-args "$@" 2>&1)"; then
@@ -43,10 +48,33 @@ deploy_contract() {
   fi
   printf '%s\n' "$output" >&2
   address="$(printf '%s\n' "$output" | sed -nE 's/^Deployed to: (0x[0-9a-fA-F]{40}).*/\1/p' | tail -n 1)"
-  if [[ -z "$address" ]]; then
-    echo "Could not parse $label address from forge create output. Inspect output above." >&2
+  tx_hash="$(printf '%s\n' "$output" | sed -nE 's/^Transaction hash: (0x[0-9a-fA-F]{64}).*/\1/p' | tail -n 1)"
+  if [[ -z "$address" || -z "$tx_hash" ]]; then
+    echo "Could not parse deployed address or transaction hash for $label. Inspect output above." >&2
     return 1
   fi
+
+  local receipt status code
+  receipt=""
+  for _ in $(seq 1 30); do
+    receipt="$(cast receipt "$tx_hash" --rpc-url "$SEPOLIA_RPC_URL" --json 2>/dev/null || true)"
+    if [[ -n "$receipt" && "$receipt" != "null" ]]; then break; fi
+    sleep 2
+  done
+  status="$(printf '%s' "$receipt" | python3 -c 'import json,sys;
+try: print(int(json.load(sys.stdin).get("status", "0x0"), 16))
+except Exception: print(0)')"
+  if [[ "$status" != "1" ]]; then
+    echo "FAILED: $label transaction did not succeed (status=$status, tx=$tx_hash). Refusing to continue." >&2
+    printf '%s\n' "$receipt" >&2
+    return 1
+  fi
+  code="$(cast code "$address" --rpc-url "$SEPOLIA_RPC_URL")"
+  if [[ "$code" == "0x" || ${#code} -le 2 ]]; then
+    echo "FAILED: $label receipt succeeded but no bytecode is visible at $address. Refusing to continue." >&2
+    return 1
+  fi
+  echo "Confirmed $label: $address (tx=$tx_hash, code bytes=$(( (${#code} - 2) / 2 )))" >&2
   printf '%s\n' "$address"
 }
 
@@ -55,13 +83,35 @@ send_and_confirm() {
   local target="$2"
   local signature="$3"
   shift 3
+  local output tx_hash receipt status
   echo "Sending $label..." >&2
-  cast send "$target" "$signature" "$@" \
-    --rpc-url "$SEPOLIA_RPC_URL" \
-    --private-key "$KEY" \
-    --gas-limit 500000 \
-    --timeout 60
-  echo "$label confirmed." >&2
+  if ! output="$(cast send "$target" "$signature" "$@" \
+      --rpc-url "$SEPOLIA_RPC_URL" \
+      --private-key "$KEY" \
+      --gas-limit 500000 \
+      --gas-price "$TX_MAX_FEE_PER_GAS" \
+      --priority-gas-price "$TX_PRIORITY_FEE_PER_GAS" \
+      --timeout 60 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    echo "FAILED: $label transaction submission. Stopping." >&2
+    return 1
+  fi
+  printf '%s\n' "$output" >&2
+  tx_hash="$(printf '%s\n' "$output" | grep -Eo '0x[0-9a-fA-F]{64}' | tail -n 1)"
+  if [[ -z "$tx_hash" ]]; then
+    echo "Could not parse $label transaction hash; refusing to claim success." >&2
+    return 1
+  fi
+  receipt="$(cast receipt "$tx_hash" --rpc-url "$SEPOLIA_RPC_URL" --json)"
+  status="$(printf '%s' "$receipt" | python3 -c 'import json,sys;
+try: print(int(json.load(sys.stdin).get("status", "0x0"), 16))
+except Exception: print(0)')"
+  if [[ "$status" != "1" ]]; then
+    echo "FAILED: $label transaction status=$status (tx=$tx_hash). Stopping." >&2
+    printf '%s\n' "$receipt" >&2
+    return 1
+  fi
+  echo "$label confirmed: $tx_hash" >&2
 }
 
 TOKEN="$(deploy_contract "DemoSettlementToken" "contracts/DemoSettlementToken.sol:DemoSettlementToken" 3000000 "$DEPLOYER_ADDRESS")"
