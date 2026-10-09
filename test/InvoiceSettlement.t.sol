@@ -780,4 +780,127 @@ contract InvoiceSettlementTest {
             "invoice ID change did not alter commitment"
         );
     }
+    uint256 private constant INTENT_PRIVATE_KEY = 0xA77158;
+
+    function _deployAuthorizedIntentExecutor(uint256 signingKey) internal returns (DemoAgentExecutor executor) {
+        executor = new DemoAgentExecutor(address(settlement), vm.addr(signingKey));
+        vm.prank(PAYER);
+        settlement.authorizeAgent(INVOICE_ID, address(executor), 2_000, 5_000, mandateExpiry);
+    }
+
+    function _signAgentIntent(
+        DemoAgentExecutor executor,
+        uint256 signingKey,
+        uint128 amount,
+        uint64 nonce,
+        uint64 deadline,
+        bytes32 contextHash,
+        bytes32 decisionHash
+    ) internal returns (bytes memory signature) {
+        bytes32 digest = executor.intentDigest(
+            INVOICE_ID, amount, nonce, deadline, contextHash, decisionHash
+        );
+        (uint8 v, bytes32 r, bytes32 sigS) = vm.sign(signingKey, digest);
+        signature = abi.encodePacked(r, sigS, v);
+    }
+
+    function testOwnerSignedIntentExecutesThroughOnchainPolicyGate() public {
+        DemoAgentExecutor executor = _deployAuthorizedIntentExecutor(INTENT_PRIVATE_KEY);
+        uint64 deadline = uint64(block.timestamp + 1 hours);
+        bytes32 contextHash = keccak256("verified payment context");
+        bytes32 decisionHash = keccak256("model ALLOW amount 1000 reason invoice accepted");
+        bytes memory signature = _signAgentIntent(
+            executor, INTENT_PRIVATE_KEY, 1_000, 0, deadline, contextHash, decisionHash
+        );
+
+        require(
+            executor.verifyIntent(
+                INVOICE_ID, 1_000, 0, deadline, contextHash, decisionHash, signature
+            ),
+            "valid owner intent did not verify"
+        );
+
+        vm.prank(STRANGER);
+        executor.executeWithIntent(
+            INVOICE_ID, 1_000, 0, deadline, contextHash, decisionHash, signature
+        );
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        InvoiceSettlement.Mandate memory mandate = settlement.getMandate(INVOICE_ID, address(executor));
+        require(inv.paid == 1_000, "signed intent was not settled");
+        require(mandate.spent == 1_000 && mandate.nonce == 1, "onchain mandate state mismatch");
+        require(token.balanceOf(BENEFICIARY) == 1_000, "beneficiary transfer mismatch");
+    }
+
+    function testSignedIntentRejectsAnotherSigner() public {
+        DemoAgentExecutor executor = _deployAuthorizedIntentExecutor(INTENT_PRIVATE_KEY);
+        uint64 deadline = uint64(block.timestamp + 1 hours);
+        bytes32 contextHash = keccak256("context");
+        bytes32 decisionHash = keccak256("decision");
+        bytes memory badSignature = _signAgentIntent(
+            executor, INTENT_PRIVATE_KEY + 1, 1_000, 0, deadline, contextHash, decisionHash
+        );
+
+        require(
+            !executor.verifyIntent(
+                INVOICE_ID, 1_000, 0, deadline, contextHash, decisionHash, badSignature
+            ),
+            "signature from a different signer verified"
+        );
+        vm.expectRevert(DemoAgentExecutor.InvalidIntentSignature.selector);
+        vm.prank(STRANGER);
+        executor.executeWithIntent(
+            INVOICE_ID, 1_000, 0, deadline, contextHash, decisionHash, badSignature
+        );
+    }
+
+    function testSignedIntentCannotBeReplayedAfterNonceAdvances() public {
+        DemoAgentExecutor executor = _deployAuthorizedIntentExecutor(INTENT_PRIVATE_KEY);
+        uint64 deadline = uint64(block.timestamp + 1 hours);
+        bytes32 contextHash = keccak256("context");
+        bytes32 decisionHash = keccak256("decision");
+        bytes memory signature = _signAgentIntent(
+            executor, INTENT_PRIVATE_KEY, 1_000, 0, deadline, contextHash, decisionHash
+        );
+
+        executor.executeWithIntent(
+            INVOICE_ID, 1_000, 0, deadline, contextHash, decisionHash, signature
+        );
+        vm.expectRevert(InvoiceSettlement.InvalidNonce.selector);
+        executor.executeWithIntent(
+            INVOICE_ID, 1_000, 0, deadline, contextHash, decisionHash, signature
+        );
+        require(token.balanceOf(BENEFICIARY) == 1_000, "replay transferred extra tokens");
+    }
+
+    function testSignedIntentIsBoundToExecutorDomainAndDecisionHashes() public {
+        DemoAgentExecutor executor = _deployAuthorizedIntentExecutor(INTENT_PRIVATE_KEY);
+        DemoAgentExecutor otherExecutor = new DemoAgentExecutor(address(settlement), vm.addr(INTENT_PRIVATE_KEY));
+        uint64 deadline = uint64(block.timestamp + 1 hours);
+        bytes32 contextHash = keccak256("context one");
+        bytes32 decisionHash = keccak256("decision one");
+        bytes32 digest = executor.intentDigest(
+            INVOICE_ID, 1_000, 0, deadline, contextHash, decisionHash
+        );
+
+        require(
+            digest != otherExecutor.intentDigest(
+                INVOICE_ID, 1_000, 0, deadline, contextHash, decisionHash
+            ),
+            "signature domain not bound to executor"
+        );
+        require(
+            digest != executor.intentDigest(
+                INVOICE_ID, 1_000, 0, deadline, contextHash, keccak256("different decision")
+            ),
+            "decision hash not bound to intent"
+        );
+        require(
+            digest != executor.intentDigest(
+                INVOICE_ID, 1_000, 0, deadline, keccak256("different context"), decisionHash
+            ),
+            "context hash not bound to intent"
+        );
+    }
+
 }
