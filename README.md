@@ -11,7 +11,7 @@ The key rule is about invoice state, not just wallet balance: an agent cannot se
 - One Solidity settlement contract, a synthetic ERC-20 payment token, and a narrow agent executor.
 - A separate test-only token fixture.
 - A synthetic invoice record bound to a terms hash, payer, beneficiary, payment token, face value, and due date.
-- Explicit lifecycle: REGISTERED to ACCEPTED to DISPUTED / SETTLED / CANCELLED.
+- Explicit lifecycle: REGISTERED to ACCEPTED, then DISPUTED, SETTLED, or CANCELLED.
 - Payer-controlled agent authorization, revocation, per-payment and aggregate limits.
 - Partial settlement, nonce/deadline checks, escrow accounting, late settlement under a still-valid mandate, and dispute freeze.
 - Foundry tests for allowed settlement and important failure paths.
