@@ -2,7 +2,7 @@
 
 **Invoice escrow with onchain mandate enforcement.**
 
-The prototype models a narrow, testable trade-finance flow: an issuer registers an invoice record, the payer accepts it, funds are deposited into escrow, and a payer-authorized executor contract can make capped partial payments to the named beneficiary. There is no LLM. The repository now includes an optional deterministic off-chain scheduler (`scripts/agent_runner.py`) that can submit payments through the narrow executor using a separate agent-owner key; it is not an autonomous reasoning agent.
+The prototype models a narrow trade-finance flow: an issuer attests to invoice terms, the payer accepts the invoice and funds escrow, and a payer-authorized executor can make capped partial payments to the named beneficiary. A deterministic off-chain scheduler (`scripts/agent_runner.py`) can submit scheduled payments through the executor. It is not an LLM or an autonomous reasoning agent.
 
 **[Watch the demo in your browser](https://rudimentall1.github.io/RWA-Agent-Guardian/video.html)**
 
@@ -12,15 +12,15 @@ The key rule is about invoice state, not just wallet balance: the executor canno
 
 - One Solidity settlement contract, a synthetic ERC-20 payment token, and a narrow agent executor.
 - A separate test-only token fixture.
-- A synthetic invoice record storing a terms hash alongside the payer, beneficiary, payment token, face value, and due date. The current public deployment uses a legacy hash that covers only a fixed synthetic descriptor. The current source computes a versioned canonical commitment over issuer, invoice ID, payer, beneficiary, token, face value, due date, and a separately stored document hash.
+- A synthetic invoice record with a canonical commitment over issuer, invoice ID, payer, beneficiary, token, face value, due date, and document hash. The source requires an EIP-712 issuer signature over those fields plus chain, contract, nonce, and deadline.
 - Explicit lifecycle: REGISTERED to ACCEPTED, then DISPUTED, SETTLED, or CANCELLED.
-- Admin-managed issuer allowlist plus payer-controlled executor authorization, revocation, per-payment and aggregate limits.
+- EIP-712 issuer attestations plus payer-controlled executor authorization, revocation, per-payment and aggregate limits.
 - Partial settlement, nonce/deadline checks, escrow accounting, late settlement under a still-valid mandate, and dispute freeze.
 - Foundry tests for allowed settlement and important failure paths.
 
 ## Important limitations
 
-- The issuer allowlist is controlled by the settlement admin. It is not an issuer attestation, legal verification, or proof that an invoice corresponds to an enforceable receivable. A beneficiary can claim remaining funded escrow only after the invoice due date plus a 30-day grace period and after the latest mandate expiry; the payer refund path is limited to that grace window.
+- Any wallet may register an invoice only by signing the exact terms with EIP-712. The signature shows which issuer made the assertion; it does not prove that the invoice is true, enforceable, owned, or collectible. A beneficiary can claim remaining funded escrow only after the due date plus a 30-day grace period and after the latest mandate expiry; the payer refund path is limited to that grace window.
 - The deterministic runner needs a separately configured agent-owner key and a payer-created on-chain mandate for the executor. The payer must still accept and fund the invoice and authorize the executor before the runner can operate.
 
 This is a hackathon prototype, not an audited financial product. The invoice and payment token are synthetic; no real receivable, legal ownership claim, or regulated asset is represented. The resolver remains a trusted role, and its admin remains privileged. Production use would need a real invoice document with a verifiable issuer attestation, a real governance/dispute process, and independent review.
@@ -39,7 +39,7 @@ For a fresh deployment, copy **.env.example** to **.env** and set the deployer k
     set +a
     bash scripts/deploy-sepolia.sh
 
-The script deploys a synthetic payment token, the settlement contract, and a narrow agent executor in sequence with explicit gas limits. It approves the deployer as an invoice issuer, stops when any transaction fails, registers a demo invoice, mints test tokens to the payer, and writes public addresses to deployment config files. When reusing a legacy settlement contract, a missing invoice cannot be registered until that contract supports issuer approval; the script fails before sending the invoice-registration transaction. Copy the resulting public addresses into **ui/config.js** based on **ui/config.example.js**. The payer must accept the invoice, approve and fund escrow, and authorize the executor before running the valid and over-limit scenarios. The **New invoice** button creates another synthetic invoice with the same payer, beneficiary, and face value; use the approved issuer wallet to register it, then reconnect as the payer to accept and fund it. To run the off-chain scheduler, set `AGENT_PRIVATE_KEY` to the key matching `agentOwner` in `deployments-sepolia.json`, then run `python3 scripts/agent_runner.py`. Configure `AGENT_PAYMENT_AMOUNT`, `AGENT_INTERVAL_SECONDS`, and `AGENT_MAX_PAYMENTS` to control the deterministic schedule.
+The script deploys a synthetic payment token, the settlement contract, and a narrow agent executor in sequence with explicit gas limits. It signs the initial invoice terms using EIP-712, stops when any transaction fails, registers the attested demo invoice, mints test tokens to the payer, and writes public addresses to deployment config files. The New invoice button lets any connected issuer register its own signed statement; the payer must still be a different wallet and must accept and fund the invoice. Copy the resulting public addresses into **ui/config.js** based on **ui/config.example.js**. The payer must accept the invoice, approve and fund escrow, and authorize the executor before running the valid and over-limit scenarios. The **New invoice** button creates another synthetic invoice with the same payer, beneficiary, and face value; use an issuer wallet different from the payer to register it, then reconnect as the payer to accept and fund it. To run the off-chain scheduler, set `AGENT_PRIVATE_KEY` to the key matching `agentOwner` in `deployments-sepolia.json`, or set `AGENT_WALLET_FILE` to a local JSON wallet file outside the repository. Then run `python3 scripts/agent_runner.py`. Configure `AGENT_PAYMENT_AMOUNT`, `AGENT_INTERVAL_SECONDS`, and `AGENT_MAX_PAYMENTS` to control the deterministic schedule.
 
 ## Submission brief
 
@@ -53,7 +53,36 @@ The public deployment has already reached its 5,000 dUSD aggregate spending limi
 
 ## Threat model
 
-See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for assets, trust assumptions, controls, and known gaps.
+### Assets to protect
+
+- Synthetic ERC-20 funds held in escrow.
+- Invoice state, funded and paid accounting, and the mandate's nonce, limits, and expiry.
+- The payer's ability to authorize or revoke the executor.
+- The beneficiary address and the integrity of the invoice terms signed by the issuer.
+
+### Trust assumptions
+
+- The deployer controls dispute-resolver administration. Issuers self-attest to the exact invoice terms; the contract verifies the signature, not legal truth.
+- The issuer signs its own EIP-712 statement. A signature confirms who signed the stated terms, not whether the invoice is legally valid or the underlying debt exists.
+- The payer accepts the invoice, funds escrow, and authorizes the executor.
+- The agent operator protects its key. A compromised key can spend only within the mandate, but can spend that allowance maliciously.
+- The token is expected to be a conventional ERC-20. Exact balance checks reject fee-on-transfer behavior but cannot make arbitrary token code trustworthy.
+
+### Controls
+
+- EIP-712 attestation over invoice fields, chain, contract, nonce, and deadline.
+- Canonical low-s ECDSA recovery, an issuer nonce, a signature deadline, and an onchain attestation digest with the signature in an event.
+- Invoice lifecycle checks, exact token balance deltas, a reentrancy guard, mandate limits, expiry, and execution nonces.
+- Regression and invariant tests for escrow coverage, payments, authority limits, signature validation, and nonce replay.
+
+### Known gaps
+
+- Invoice and token are synthetic. The document hash is not proof of ownership, delivery, enforceability, or collectible value. This repository does not include an ERC-721 claim token or a transfer of legal title.
+- Admin and dispute resolver privileges are centralized. The seven-day dispute timeout reopens execution; it does not resolve the commercial dispute.
+- The existing public Sepolia contracts predate the current source. Source changes are not active on those deployed addresses until a fresh deployment is verified.
+- No independent audit has been performed. Do not use this prototype to hold real assets.
+
+The fuller version is available in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 ## Build and test
 

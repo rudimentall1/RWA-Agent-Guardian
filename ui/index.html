@@ -45,7 +45,7 @@
     <div>
       <div class="eyebrow">RWA · onchain invoice settlement</div>
       <h1>Settle invoices.<br>Enforce the mandate onchain.</h1>
-      <p>The payer accepts a synthetic invoice, funds escrow, and authorizes a narrowly capped executor contract. The contract enforces mandate limits and invoice state when settlement is attempted. This prototype has no running AI agent or LLM.</p>
+      <p>The payer accepts a synthetic invoice, funds escrow, and authorizes a narrowly capped executor contract. A deterministic off-chain runner can submit scheduled payments within that mandate. Invoice registration requires an EIP-712 issuer signature. There is no LLM.</p>
     </div>
     <button class="primary" id="connect">Connect wallet</button>
   </header>
@@ -62,6 +62,7 @@
       <div class="metric"><span>Payer token balance</span><strong id="balance">Not loaded</strong></div>
       <div class="metric"><span>Terms hash</span><strong id="termsHash">Not loaded</strong></div>
       <div class="metric"><span>Hash preimage check</span><strong id="termsCheck">Not checked</strong></div>
+      <div class="metric"><span>Issuer attestation</span><strong id="issuerAttestation">Not checked</strong></div>
       <p>The live Sepolia contract uses a legacy hash of the synthetic descriptor string. That deployed version does not cryptographically bind the separately stored payer, beneficiary, token, or due date. The newer source contract computes a canonical commitment over those fields and the document hash.</p>
       <div class="metric"><span>Agent mandate</span><strong id="mandateState">Not loaded</strong></div>
       <div class="metric"><span>Per-payment limit</span><strong id="perLimit">Not loaded</strong></div>
@@ -129,8 +130,9 @@
     "function invoices(bytes32) view returns (address issuer,address payer,address beneficiary,address token,uint128 faceValue,uint128 funded,uint128 paid,uint64 dueAt,bytes32 termsHash,uint8 status)",
     "function mandates(bytes32,address) view returns (uint128 perPaymentLimit,uint128 totalLimit,uint128 spent,uint64 expiresAt,uint64 nonce,bool active)",
     "function invoiceDocumentHashes(bytes32) view returns (bytes32)",
-    "function approvedIssuers(address) view returns (bool)",
-    "function registerInvoice(bytes32,address,address,address,uint128,uint64,bytes32)",
+    "function issuerNonces(address) view returns (uint256)",
+    "function invoiceAttestationDigests(bytes32) view returns (bytes32)",
+    "function registerInvoice(bytes32,address,address,address,uint128,uint64,bytes32,uint256,uint64,bytes)",
     "function computeTermsHash(address,bytes32,address,address,address,uint128,uint64,bytes32) pure returns (bytes32)",
     "function acceptInvoice(bytes32)",
     "function fundInvoice(bytes32,uint128)",
@@ -348,6 +350,13 @@
         inv.termsHash.toLowerCase() === legacyHash.toLowerCase() ?
           "Legacy descriptor matches; fields not bound" : "Commitment mismatch";
     }
+    try {
+      const attestationDigest = await readSettlement.invoiceAttestationDigests(activeInvoiceId);
+      $("issuerAttestation").textContent = attestationDigest !== ethers.ZeroHash ?
+        "EIP-712 signature verified onchain" : "No signed attestation";
+    } catch (_) {
+      $("issuerAttestation").textContent = "Not supported by this deployment";
+    }
     $("mandateState").textContent = mandateStatus;
     $("perLimit").textContent = formatDUSD(mandate.perPaymentLimit) + " dUSD";
     $("totalLimit").textContent = formatDUSD(mandate.totalLimit) + " dUSD";
@@ -398,24 +407,58 @@
     try {
       ensureReadOnlyContracts();
       if (!signer || !userAddress || !settlement) {
-        throw new Error("Connect the approved issuer wallet to create a new invoice. Then reconnect as the registered payer to accept and fund it.");
+        throw new Error("Connect the issuer wallet to create a signed invoice. Then reconnect as the registered payer to accept and fund it.");
       }
-      let isApproved;
-      try { isApproved = await readSettlement.approvedIssuers(userAddress); }
-      catch (_) { throw new Error("This Sepolia settlement is an older deployment and does not support new invoice creation. A fresh deployment is required."); }
-      if (!isApproved) throw new Error("The connected wallet is not on the settlement contract's issuer allowlist. Use the approved issuer wallet.");
       const current = await readSettlement.invoices(activeInvoiceId);
       if (userAddress.toLowerCase() === current.payer.toLowerCase()) {
-        throw new Error("The issuer cannot be the payer. Connect the approved issuer wallet, which must differ from the registered payer.");
+        throw new Error("The issuer cannot be the payer. Connect an issuer wallet that differs from the registered payer.");
       }
       const block = await readProvider.getBlock("latest");
       const unique = "RWA-AGENT-GUARDIAN-" + Date.now() + "-" + crypto.randomUUID();
       const newId = ethers.keccak256(ethers.toUtf8Bytes(unique));
       const documentHash = ethers.keccak256(ethers.toUtf8Bytes("synthetic-demo-document-" + unique));
       const dueAt = BigInt(block.timestamp) + 30n * 24n * 60n * 60n;
-      note("Registering a new synthetic demo invoice on Sepolia...", "");
+      let nonce;
+      try { nonce = await readSettlement.issuerNonces(userAddress); }
+      catch (_) { throw new Error("This Sepolia settlement predates issuer attestations. A fresh deployment is required before creating a new invoice."); }
+      const attestationDeadline = BigInt(block.timestamp) + 24n * 60n * 60n;
+      const domain = {
+        name: "RWA Agent Guardian",
+        version: "1",
+        chainId: Number(cfg.chainId),
+        verifyingContract: cfg.settlement
+      };
+      const types = {
+        InvoiceAttestation: [
+          { name: "invoiceId", type: "bytes32" },
+          { name: "issuer", type: "address" },
+          { name: "payer", type: "address" },
+          { name: "beneficiary", type: "address" },
+          { name: "token", type: "address" },
+          { name: "faceValue", type: "uint128" },
+          { name: "dueAt", type: "uint64" },
+          { name: "documentHash", type: "bytes32" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint64" }
+        ]
+      };
+      const attestation = {
+        invoiceId: newId,
+        issuer: userAddress,
+        payer: current.payer,
+        beneficiary: current.beneficiary,
+        token: current.token,
+        faceValue: current.faceValue,
+        dueAt,
+        documentHash,
+        nonce,
+        deadline: attestationDeadline
+      };
+      note("Sign the invoice terms as issuer, then submit the attested registration...", "");
+      const issuerSignature = await signer.signTypedData(domain, types, attestation);
       const txResponse = await settlement.registerInvoice(
-        newId, current.payer, current.beneficiary, current.token, current.faceValue, dueAt, documentHash
+        newId, current.payer, current.beneficiary, current.token, current.faceValue,
+        dueAt, documentHash, nonce, attestationDeadline, issuerSignature
       );
       const receipt = await txResponse.wait();
       if (!receipt || receipt.status !== 1) throw new Error("Invoice registration transaction failed.");

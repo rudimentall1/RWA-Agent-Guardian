@@ -11,6 +11,8 @@ interface Vm {
     function warp(uint256 timestamp) external;
     function expectRevert(bytes4 selector) external;
     function expectRevert(bytes calldata revertData) external;
+    function addr(uint256 privateKey) external returns (address);
+    function sign(uint256 privateKey, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
 }
 
 contract InvoiceSettlementTest {
@@ -22,7 +24,21 @@ contract InvoiceSettlementTest {
     address private constant BENEFICIARY = address(0xD00D);
     address private constant AGENT = address(0xA11CE);
     address private constant STRANGER = address(0xBAD);
+    uint256 private constant ISSUER_PRIVATE_KEY = 0xA77157;
 
+    struct RegistrationAttempt {
+        address issuer;
+        bytes32 invoiceId;
+        uint128 faceValue;
+        uint64 dueAt;
+        bytes32 documentHash;
+        uint256 signingKey;
+        uint256 nonce;
+    }
+
+    address private issuer;
+    uint64 private lastAttestationDeadline;
+    bytes private lastAttestationSignature;
     TestToken private token;
     InvoiceSettlement private settlement;
     uint64 private dueAt;
@@ -31,7 +47,7 @@ contract InvoiceSettlementTest {
     function setUp() public {
         token = new TestToken();
         settlement = new InvoiceSettlement(address(this));
-        settlement.setIssuerApproval(address(this), true);
+        issuer = vm.addr(ISSUER_PRIVATE_KEY);
         dueAt = uint64(block.timestamp + 30 days);
         mandateExpiry = uint64(block.timestamp + 1 days);
 
@@ -39,7 +55,7 @@ contract InvoiceSettlementTest {
         vm.prank(PAYER);
         token.approve(address(settlement), 10_000);
 
-        settlement.registerInvoice(INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH);
+        _registerInvoice(INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH);
         vm.prank(PAYER);
         settlement.acceptInvoice(INVOICE_ID);
         vm.prank(PAYER);
@@ -48,19 +64,145 @@ contract InvoiceSettlementTest {
         settlement.authorizeAgent(INVOICE_ID, AGENT, 2_000, 5_000, mandateExpiry);
     }
 
-    function testUnapprovedIssuerCannotRegisterInvoice() public {
-        address unapprovedIssuer = address(0x5151);
-        vm.expectRevert(InvoiceSettlement.Unauthorized.selector);
-        vm.prank(unapprovedIssuer);
-        settlement.registerInvoice(keccak256("UNAPPROVED"), PAYER, BENEFICIARY, address(token), 100, dueAt, TERMS_HASH);
+    function _registerInvoice(
+        bytes32 invoiceId,
+        address payer,
+        address beneficiary,
+        address invoiceToken,
+        uint128 faceValue,
+        uint64 invoiceDueAt,
+        bytes32 documentHash
+    ) internal {
+        uint256 nonce = settlement.issuerNonces(issuer);
+        uint64 deadline = uint64(block.timestamp + 1 days);
+        bytes32 digest = settlement.issuerAttestationDigest(
+            invoiceId, issuer, payer, beneficiary, invoiceToken, faceValue, invoiceDueAt, documentHash, nonce, deadline
+        );
+        (uint8 v, bytes32 r, bytes32 sigS) = vm.sign(ISSUER_PRIVATE_KEY, digest);
+        bytes memory signature = abi.encodePacked(r, sigS, v);
+        lastAttestationDeadline = deadline;
+        lastAttestationSignature = signature;
+        vm.prank(issuer);
+        settlement.registerInvoice(
+            invoiceId,
+            payer,
+            beneficiary,
+            invoiceToken,
+            faceValue,
+            invoiceDueAt,
+            documentHash,
+            nonce,
+            deadline,
+            signature
+        );
     }
 
-    function testAdminCanApproveAndRevokeIssuer() public {
-        address issuer = address(0x6161);
-        settlement.setIssuerApproval(issuer, true);
-        require(settlement.approvedIssuers(issuer), "issuer not approved");
-        settlement.setIssuerApproval(issuer, false);
-        require(!settlement.approvedIssuers(issuer), "issuer approval not revoked");
+    function _prepareRegistration(RegistrationAttempt memory attempt)
+        internal
+        returns (uint64 deadline, bytes memory signature)
+    {
+        deadline = uint64(block.timestamp + 1 days);
+        bytes32 digest = settlement.issuerAttestationDigest(
+            attempt.invoiceId,
+            attempt.issuer,
+            PAYER,
+            BENEFICIARY,
+            address(token),
+            attempt.faceValue,
+            attempt.dueAt,
+            attempt.documentHash,
+            attempt.nonce,
+            deadline
+        );
+        (uint8 v, bytes32 r, bytes32 sigS) = vm.sign(attempt.signingKey, digest);
+        signature = abi.encodePacked(r, sigS, v);
+    }
+
+    function _submitRegistration(RegistrationAttempt memory attempt, uint64 deadline, bytes memory signature) internal {
+        vm.prank(attempt.issuer);
+        settlement.registerInvoice(
+            attempt.invoiceId,
+            PAYER,
+            BENEFICIARY,
+            address(token),
+            attempt.faceValue,
+            attempt.dueAt,
+            attempt.documentHash,
+            attempt.nonce,
+            deadline,
+            signature
+        );
+    }
+
+    function _registerInvoiceUsingKey(RegistrationAttempt memory attempt) internal {
+        (uint64 deadline, bytes memory signature) = _prepareRegistration(attempt);
+        _submitRegistration(attempt, deadline, signature);
+    }
+
+    function testIssuerAttestationIsVerifiedAndRecorded() public view {
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        bytes32 digest = settlement.issuerAttestationDigest(
+            INVOICE_ID,
+            issuer,
+            PAYER,
+            BENEFICIARY,
+            address(token),
+            10_000,
+            dueAt,
+            TERMS_HASH,
+            0,
+            lastAttestationDeadline
+        );
+        require(settlement.invoiceAttestationDigests(INVOICE_ID) == digest, "attestation digest not recorded");
+        require(
+            settlement.recoverIssuer(digest, lastAttestationSignature) == issuer, "issuer signature not recoverable"
+        );
+        require(inv.issuer == issuer, "invoice issuer mismatch");
+        require(settlement.issuerNonces(issuer) == 1, "issuer nonce not consumed");
+    }
+
+    function testWrongIssuerSignatureIsRejected() public {
+        RegistrationAttempt memory attempt = RegistrationAttempt({
+            issuer: issuer,
+            invoiceId: keccak256("INV-WRONG-ISSUER-SIGNATURE"),
+            faceValue: 100,
+            dueAt: uint64(block.timestamp + 30 days),
+            documentHash: keccak256("wrong-signature-doc"),
+            signingKey: 0xBEEF,
+            nonce: settlement.issuerNonces(issuer)
+        });
+        (uint64 deadline, bytes memory signature) = _prepareRegistration(attempt);
+        vm.expectRevert(InvoiceSettlement.InvalidAttestation.selector);
+        _submitRegistration(attempt, deadline, signature);
+    }
+
+    function testStaleIssuerNonceIsRejected() public {
+        RegistrationAttempt memory attempt = RegistrationAttempt({
+            issuer: issuer,
+            invoiceId: keccak256("INV-STALE-ISSUER-NONCE"),
+            faceValue: 100,
+            dueAt: uint64(block.timestamp + 30 days),
+            documentHash: keccak256("stale-nonce-doc"),
+            signingKey: ISSUER_PRIVATE_KEY,
+            nonce: 0
+        });
+        (uint64 deadline, bytes memory signature) = _prepareRegistration(attempt);
+        vm.expectRevert(InvoiceSettlement.InvalidAttestationNonce.selector);
+        _submitRegistration(attempt, deadline, signature);
+    }
+
+    function testAnyIssuerCanRegisterWithItsOwnAttestation() public {
+        RegistrationAttempt memory attempt = RegistrationAttempt({
+            issuer: vm.addr(0x6161),
+            invoiceId: keccak256("INV-PERMISSIONLESS-ISSUER"),
+            faceValue: 100,
+            dueAt: uint64(block.timestamp + 30 days),
+            documentHash: keccak256("self-attested-document"),
+            signingKey: 0x6161,
+            nonce: 0
+        });
+        _registerInvoiceUsingKey(attempt);
+        require(settlement.getInvoice(attempt.invoiceId).issuer == attempt.issuer, "issuer not recorded");
     }
 
     function testDemoExecutorCanSettleWhenItsAddressHasAMandate() public {
@@ -248,7 +390,7 @@ contract InvoiceSettlementTest {
 
     function testInvoiceMustBeAcceptedBeforeFunding() public {
         bytes32 otherId = keccak256("INV-UNACCEPTED");
-        settlement.registerInvoice(
+        _registerInvoice(
             otherId,
             PAYER,
             BENEFICIARY,
@@ -266,7 +408,7 @@ contract InvoiceSettlementTest {
     function testCanonicalTermsHashBindsAllInvoiceFieldsAndDocumentHash() public {
         InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
         bytes32 expected = settlement.computeTermsHash(
-            address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
+            issuer, INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
         );
         require(inv.termsHash == expected, "stored terms hash is not canonical");
         require(settlement.invoiceDocumentHashes(INVOICE_ID) == TERMS_HASH, "document hash not stored");
@@ -274,59 +416,60 @@ contract InvoiceSettlementTest {
         require(
             expected
                 != settlement.computeTermsHash(
-                    address(this), INVOICE_ID, address(0xB0C), BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
+                    issuer, INVOICE_ID, address(0xB0C), BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
                 ),
             "payer change did not alter commitment"
         );
         require(
             expected
                 != settlement.computeTermsHash(
-                    address(this), INVOICE_ID, PAYER, address(0xD00E), address(token), 10_000, dueAt, TERMS_HASH
+                    issuer, INVOICE_ID, PAYER, address(0xD00E), address(token), 10_000, dueAt, TERMS_HASH
                 ),
             "beneficiary change did not alter commitment"
         );
         require(
             expected
                 != settlement.computeTermsHash(
-                    address(this), INVOICE_ID, PAYER, BENEFICIARY, address(0x1234), 10_000, dueAt, TERMS_HASH
+                    issuer, INVOICE_ID, PAYER, BENEFICIARY, address(0x1234), 10_000, dueAt, TERMS_HASH
                 ),
             "token change did not alter commitment"
         );
         require(
             expected
                 != settlement.computeTermsHash(
-                    address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_001, dueAt, TERMS_HASH
+                    issuer, INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_001, dueAt, TERMS_HASH
                 ),
             "face value change did not alter commitment"
         );
         require(
             expected
                 != settlement.computeTermsHash(
-                    address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt + 1, TERMS_HASH
+                    issuer, INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt + 1, TERMS_HASH
                 ),
             "due date change did not alter commitment"
         );
         require(
             expected
                 != settlement.computeTermsHash(
-                    address(this),
-                    INVOICE_ID,
-                    PAYER,
-                    BENEFICIARY,
-                    address(token),
-                    10_000,
-                    dueAt,
-                    keccak256("other-document")
+                    issuer, INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, keccak256("other-document")
                 ),
             "document hash change did not alter commitment"
         );
     }
 
     function testDuplicateInvoiceIdIsRejected() public {
+        RegistrationAttempt memory attempt = RegistrationAttempt({
+            issuer: issuer,
+            invoiceId: INVOICE_ID,
+            faceValue: 100,
+            dueAt: uint64(block.timestamp + 30 days),
+            documentHash: TERMS_HASH,
+            signingKey: ISSUER_PRIVATE_KEY,
+            nonce: settlement.issuerNonces(issuer)
+        });
+        (uint64 deadline, bytes memory signature) = _prepareRegistration(attempt);
         vm.expectRevert(abi.encodeWithSelector(InvoiceSettlement.InvoiceExists.selector, INVOICE_ID));
-        settlement.registerInvoice(
-            INVOICE_ID, PAYER, BENEFICIARY, address(token), 100, uint64(block.timestamp + 30 days), TERMS_HASH
-        );
+        _submitRegistration(attempt, deadline, signature);
     }
 
     function testPayerCanCancelAndRefundAfterMandateExpiryWithoutResolver() public {
@@ -424,7 +567,7 @@ contract InvoiceSettlementTest {
         feeToken.mint(PAYER, 10_000);
         vm.prank(PAYER);
         feeToken.approve(address(settlement), 10_000);
-        settlement.registerInvoice(feeInvoice, PAYER, BENEFICIARY, address(feeToken), 10_000, dueAt, TERMS_HASH);
+        _registerInvoice(feeInvoice, PAYER, BENEFICIARY, address(feeToken), 10_000, dueAt, TERMS_HASH);
         vm.prank(PAYER);
         settlement.acceptInvoice(feeInvoice);
         feeToken.setFeeBps(1_000);
@@ -445,7 +588,7 @@ contract InvoiceSettlementTest {
         feeToken.mint(PAYER, 10_000);
         vm.prank(PAYER);
         feeToken.approve(address(settlement), 10_000);
-        settlement.registerInvoice(feeInvoice, PAYER, BENEFICIARY, address(feeToken), 10_000, dueAt, TERMS_HASH);
+        _registerInvoice(feeInvoice, PAYER, BENEFICIARY, address(feeToken), 10_000, dueAt, TERMS_HASH);
         vm.prank(PAYER);
         settlement.acceptInvoice(feeInvoice);
         vm.prank(PAYER);
