@@ -1,0 +1,7 @@
+window.AEGIS_CONFIG = {
+  "chainId": 11155111,
+  "token": "0x5BbCBE09abAdE15Fbf9a36caB689675F58b50A71",
+  "settlement": "0x92d045c5dae176b43e99b3Ba23C5DFb4D3c8698b",
+  "agentExecutor": "0x29a88F9571295ab5685f4DDc0C7D63dDC26f8c28",
+  "invoiceId": "0xe4f729cc5c74e26942b90175714ea77f0711eb25e5ea3b3620ff097d6805a571"
+};
