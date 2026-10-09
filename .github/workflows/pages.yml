@@ -30,6 +30,7 @@ jobs:
         uses: actions/configure-pages@v5
         with:
           enablement: true
+      # Publish only the browser demo; the UI entry point lives in ui/.
       - name: Upload static demo
         uses: actions/upload-pages-artifact@v3
         with:
