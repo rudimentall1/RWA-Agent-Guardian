@@ -90,13 +90,16 @@ def validate_evidence(evidence, config):
     if evidence.get("decisionHash") != decision_hash:
         raise SystemExit("Decision hash mismatch; evidence was changed or is inconsistent")
 
+    intent_deadline = evidence.get("intentDeadline")
+    if type(intent_deadline) is not int or intent_deadline <= 0:
+        raise SystemExit("Evidence is missing a valid intent deadline")
     typed_data = build_intent_typed_data(
         int(config["chainId"]),
         config["agentExecutor"],
         config["invoiceId"],
         int(checked_decision["amount"]),
         int(context["mandate"]["nonce"]),
-        int(context["decisionDeadline"]),
+        intent_deadline,
         context_hash,
         decision_hash,
     )
@@ -117,6 +120,7 @@ def validate_evidence(evidence, config):
         "decision": checked_decision,
         "contextHash": context_hash,
         "decisionHash": decision_hash,
+        "intentDeadline": intent_deadline,
         "typedData": typed_data,
         "signature": signature,
         "status": status,
@@ -174,7 +178,7 @@ def verify_execution_transaction(proof, rpc, executor):
         proof["context"]["invoiceId"][2:].lower(),
         f"{proof['decision']['amount']:064x}",
         f"{proof['context']['mandate']['nonce']:064x}",
-        f"{proof['context']['decisionDeadline']:064x}",
+        f"{proof['intentDeadline']:064x}",
         proof["contextHash"][2:].lower(),
         proof["decisionHash"][2:].lower(),
     ]
@@ -235,7 +239,7 @@ def main():
     c = proof["context"]
     verify_intent_onchain(
         rpc, executor, c["invoiceId"], proof["decision"]["amount"],
-        c["mandate"]["nonce"], c["decisionDeadline"], proof["contextHash"],
+        c["mandate"]["nonce"], proof["intentDeadline"], proof["contextHash"],
         proof["decisionHash"], proof["signature"]
     )
     print("Executor verifyIntent(): OK")
