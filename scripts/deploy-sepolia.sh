@@ -32,7 +32,7 @@ deploy_contract() {
   local constructor_signature="$3"
   shift 3
   local constructor_args=("$@")
-  local bytecode encoded payload estimate_hex gas_limit output address
+  local bytecode encoded payload estimate_hex gas_limit output address nonce
 
   # Sepolia activated Glamsterdam on 2026-10-06, which repriced state creation.
   # Estimate with the live RPC, then add 35% headroom. EIP-7825 caps a tx at
@@ -64,10 +64,17 @@ GASPY
     echo "FAILED: no safe gas limit established for $label. No transaction sent." >&2
     return 1
   fi
-  echo "Deploying $label (RPC estimate: $((gas_limit * 100 / 135)) gas; limit with 35% headroom: $gas_limit)..." >&2
+  # Explicit pending nonce avoids Forge reusing a stale nonce from this RPC.
+  if ! nonce="$(cast nonce "$DEPLOYER_ADDRESS" --block pending --rpc-url "$SEPOLIA_RPC_URL")" ||
+      [[ ! "$nonce" =~ ^[0-9]+$ ]]; then
+    echo "FAILED: could not read pending nonce for $label. No transaction sent." >&2
+    return 1
+  fi
+  echo "Deploying $label (RPC estimate: $((gas_limit * 100 / 135)) gas; limit with 35% headroom: $gas_limit; nonce: $nonce)..." >&2
   if ! output="$(forge create "$artifact" \
       --rpc-url "$SEPOLIA_RPC_URL" \
       --private-key "$KEY" \
+      --nonce "$nonce" \
       --gas-limit "$gas_limit" \
       --gas-price "$TX_MAX_FEE_PER_GAS" \
       --priority-gas-price "$TX_PRIORITY_FEE_PER_GAS" \
@@ -110,16 +117,39 @@ except Exception: print(0)')"
   printf '%s\n' "$address"
 }
 
+verify_existing_contract() {
+  local label="$1"
+  local address="$2"
+  local code
+  if [[ ! "$address" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
+    echo "FAILED: invalid EXISTING address for $label." >&2
+    return 1
+  fi
+  code="$(cast code "$address" --rpc-url "$SEPOLIA_RPC_URL")"
+  if [[ "$code" == "0x" || ${#code} -le 2 ]]; then
+    echo "FAILED: no bytecode at supplied $label address $address." >&2
+    return 1
+  fi
+  echo "Reusing verified $label: $address (code bytes=$(( (${#code} - 2) / 2 )))" >&2
+  printf '%s\n' "$address"
+}
+
 send_and_confirm() {
   local label="$1"
   local target="$2"
   local signature="$3"
   shift 3
-  local output tx_hash receipt status
-  echo "Sending $label..." >&2
+  local output tx_hash receipt status nonce
+  if ! nonce="$(cast nonce "$DEPLOYER_ADDRESS" --block pending --rpc-url "$SEPOLIA_RPC_URL")" ||
+      [[ ! "$nonce" =~ ^[0-9]+$ ]]; then
+    echo "FAILED: could not read pending nonce for $label. No transaction sent." >&2
+    return 1
+  fi
+  echo "Sending $label (nonce: $nonce)..." >&2
   if ! output="$(cast send "$target" "$signature" "$@" \
       --rpc-url "$SEPOLIA_RPC_URL" \
       --private-key "$KEY" \
+      --nonce "$nonce" \
       --gas-limit 500000 \
       --gas-price "$TX_MAX_FEE_PER_GAS" \
       --priority-gas-price "$TX_PRIORITY_FEE_PER_GAS" \
@@ -146,9 +176,23 @@ except Exception: print(0)')"
   echo "$label confirmed: $tx_hash" >&2
 }
 
-TOKEN="$(deploy_contract "DemoSettlementToken" "contracts/DemoSettlementToken.sol:DemoSettlementToken" 'constructor(address)' "$DEPLOYER_ADDRESS")"
-SETTLEMENT="$(deploy_contract "InvoiceSettlement" "contracts/InvoiceSettlement.sol:InvoiceSettlement" 'constructor(address)' "$DEPLOYER_ADDRESS")"
-EXECUTOR="$(deploy_contract "DemoAgentExecutor" "contracts/DemoAgentExecutor.sol:DemoAgentExecutor" 'constructor(address,address)' "$SETTLEMENT" "$PAYER_ADDRESS")"
+# Set EXISTING_*_ADDRESS to reuse a verified deployment after a partial run.
+# This prevents retrying a whole deployment from creating duplicate token/escrow contracts.
+if [[ -n "${EXISTING_TOKEN_ADDRESS:-}" ]]; then
+  TOKEN="$(verify_existing_contract "DemoSettlementToken" "$EXISTING_TOKEN_ADDRESS")"
+else
+  TOKEN="$(deploy_contract "DemoSettlementToken" "contracts/DemoSettlementToken.sol:DemoSettlementToken" 'constructor(address)' "$DEPLOYER_ADDRESS")"
+fi
+if [[ -n "${EXISTING_SETTLEMENT_ADDRESS:-}" ]]; then
+  SETTLEMENT="$(verify_existing_contract "InvoiceSettlement" "$EXISTING_SETTLEMENT_ADDRESS")"
+else
+  SETTLEMENT="$(deploy_contract "InvoiceSettlement" "contracts/InvoiceSettlement.sol:InvoiceSettlement" 'constructor(address)' "$DEPLOYER_ADDRESS")"
+fi
+if [[ -n "${EXISTING_EXECUTOR_ADDRESS:-}" ]]; then
+  EXECUTOR="$(verify_existing_contract "DemoAgentExecutor" "$EXISTING_EXECUTOR_ADDRESS")"
+else
+  EXECUTOR="$(deploy_contract "DemoAgentExecutor" "contracts/DemoAgentExecutor.sol:DemoAgentExecutor" 'constructor(address,address)' "$SETTLEMENT" "$PAYER_ADDRESS")"
+fi
 
 INVOICE_ID="$(cast keccak 'INV-1001')"
 TERMS_HASH="$(cast keccak 'INV-1001|Synthetic invoice|10000 dUSD|NET30|v1')"
