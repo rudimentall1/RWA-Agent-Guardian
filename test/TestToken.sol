@@ -9,6 +9,10 @@ contract TestToken {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
     bool public failTransfers;
+    address public callbackTarget;
+    bytes public callbackData;
+    bool public callbackAttempted;
+    bool public callbackBlocked;
 
     error InsufficientBalance();
     error InsufficientAllowance();
@@ -26,9 +30,24 @@ contract TestToken {
         failTransfers = value;
     }
 
+    function configureCallback(address target, bytes calldata data) external {
+        callbackTarget = target;
+        callbackData = data;
+        callbackAttempted = false;
+        callbackBlocked = false;
+    }
+
+    function _attemptCallback() private {
+        if (callbackTarget == address(0) || callbackAttempted) return;
+        callbackAttempted = true;
+        (bool ok,) = callbackTarget.call(callbackData);
+        callbackBlocked = !ok;
+    }
+
     function transfer(address to, uint256 amount) external returns (bool) {
         if (failTransfers) return false;
         if (balanceOf[msg.sender] < amount) revert InsufficientBalance();
+        _attemptCallback();
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         return true;
