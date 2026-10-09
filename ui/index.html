@@ -45,7 +45,7 @@
     <div>
       <div class="eyebrow">RWA · onchain invoice settlement</div>
       <h1>Settle invoices.<br>Enforce the mandate onchain.</h1>
-      <p>The payer accepts a synthetic invoice, funds escrow, and authorizes a narrowly capped executor contract. A deterministic off-chain runner can submit scheduled payments within that mandate. Invoice registration requires an EIP-712 issuer signature. There is no LLM.</p>
+      <p>The payer accepts a synthetic invoice, funds escrow, and authorizes a narrowly capped executor. The optional Ollama runner proposes ALLOW, WAIT, or BLOCK from on-chain facts; strict policy checks cap its amount before execution. In AI mode, an EIP-712 signed intent binds the decision to the context and is verified by the upgraded executor, while the settlement contract enforces the mandate. The invoice is synthetic and the model does not verify legal truth.</p>
     </div>
     <button class="primary" id="connect">Connect wallet</button>
   </header>
@@ -122,7 +122,7 @@
   let activeInvoiceId = cfg?.invoiceId;
   try { activeInvoiceId = localStorage.getItem(invoiceStorageKey) || activeInvoiceId; } catch (_) { /* private browsing may disable storage */ }
   const $ = (id) => document.getElementById(id);
-  const states = ["NONE", "REGISTERED", "ACCEPTED", "DISPUTED", "SETTLED", "CANCELLED", "CLAIMED"];
+  const states = ["NONE", "REGISTERED", "ACCEPTED", "DISPUTED", "SETTLED", "CANCELLED", "CLAIMED", "ESCALATED"];
   const tokenAbi = [
     "function balanceOf(address) view returns (uint256)",
     "function approve(address,uint256) returns (bool)",
