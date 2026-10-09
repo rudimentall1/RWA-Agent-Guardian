@@ -13,7 +13,7 @@ The key rule is about invoice state, not just wallet balance: the executor canno
 - One Solidity settlement contract, a synthetic ERC-20 payment token, and a narrow agent executor.
 - A separate test-only token fixture.
 - A synthetic invoice record with a canonical commitment over issuer, invoice ID, payer, beneficiary, token, face value, due date, and document hash. The source requires an EIP-712 issuer signature over those fields plus chain, contract, nonce, and deadline.
-- Explicit lifecycle: REGISTERED to ACCEPTED, then DISPUTED, SETTLED, or CANCELLED.
+- Explicit lifecycle: REGISTERED to ACCEPTED, then DISPUTED, ESCALATED after a seven-day unresolved dispute timeout, SETTLED, CANCELLED, or CLAIMED. ESCALATED stays frozen until the resolver explicitly resumes or cancels the invoice.
 - EIP-712 issuer attestations plus payer-controlled executor authorization, revocation, per-payment and aggregate limits.
 - Partial settlement, nonce/deadline checks, escrow accounting, late settlement under a still-valid mandate, and dispute freeze.
 - Foundry tests for allowed settlement and important failure paths.
@@ -78,8 +78,8 @@ The earlier deployment shown in the recorded payment sequence has reached its 5,
 ### Known gaps
 
 - Invoice and token are synthetic. The document hash is not proof of ownership, delivery, enforceability, or collectible value. This repository does not include an ERC-721 claim token or a transfer of legal title.
-- Admin and dispute resolver privileges are centralized. The seven-day dispute timeout reopens execution; it does not resolve the commercial dispute.
-- The existing public Sepolia contracts predate the current source. Source changes are not active on those deployed addresses until a fresh deployment is verified.
+- At timeout, an unresolved DISPUTED invoice moves to ESCALATED and remains frozen until the dispute resolver explicitly resumes execution or cancels and refunds the invoice.
+- The earlier Sepolia instance used for the recorded three-payment sequence is separate from the later instance configured in the UI. They have different state and transaction histories. The current UI deployment corresponds to the current contract source; see [deployment evidence](docs/demo-evidence-2026-10-09.md).
 - No independent audit has been performed. Do not use this prototype to hold real assets.
 
 The fuller version is available in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
