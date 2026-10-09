@@ -38,5 +38,5 @@ This prototype models invoice registration, acceptance, synthetic-token escrow, 
 - Disputes are controlled by a trusted resolver. After seven days, anyone can reopen the invoice; this prevents an indefinite technical freeze but does not decide the underlying commercial dispute. There is no bond or neutral arbitration.
 - Admin and resolver privileges are centralized; production deployment should use a multisig and a governed delay.
 - The executor is not an AI model. `scripts/agent_runner.py` is a deterministic offchain scheduler that submits only onchain-authorized executions.
-- The existing public Sepolia contracts predate the current source and do not gain these changes unless a fresh deployment is made and verified.
+- The earlier Sepolia deployment used for the completed payment sequence predates the current source. The addresses in `deployments-sepolia.json` and `ui/config.js` refer to the later deployment; the contract sources have not changed since that deployment commit. Both remain testnet deployments, not production infrastructure.
 - No independent audit has been performed. Do not use this prototype to hold real assets.
