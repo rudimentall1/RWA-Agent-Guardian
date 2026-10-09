@@ -38,6 +38,10 @@ For a deployment, copy **.env.example** to **.env** and set the deployer key, pa
 
 The script deploys a synthetic payment token, the settlement contract, and a narrow agent executor in sequence with explicit gas limits. It stops when any transaction fails, registers a demo invoice, mints test tokens to the payer, and writes public addresses to deployment config files. Copy the resulting public addresses into **ui/config.js** based on **ui/config.example.js**. The connected payer must accept the invoice, approve and fund escrow, and authorize the executor before running the valid and over-limit scenarios.
 
+## Submission brief
+
+A concise summary of the problem, implementation, demo links, test commands, provenance, and limitations is available in [docs/SUBMISSION_BRIEF.md](docs/SUBMISSION_BRIEF.md).
+
 ## Demo recording
 
 The walkthrough has a browser-based player at [Watch the demo](https://rudimentall1.github.io/RWA-Agent-Guardian/video.html). The MP4 is also kept in **demo/** in this repository. The player uses the same video file and supports playback and seeking without requiring a manual download.
