@@ -252,12 +252,17 @@ DUEPY
     echo "MISSING"
     return 0
   fi
-  if ! expected_terms_hash="$(cast call "$SETTLEMENT" \
+  if expected_terms_hash="$(cast call "$SETTLEMENT" \
       "computeTermsHash(address,bytes32,address,address,address,uint128,uint64,bytes32)(bytes32)" \
       "$DEPLOYER_ADDRESS" "$INVOICE_ID" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" "$TOKEN" \
       "$FACE_VALUE" "$due_at" "$TERMS_HASH" --rpc-url "$SEPOLIA_RPC_URL")"; then
-    echo "FAILED: could not compute canonical terms hash on the target contract." >&2
-    return 1
+    :
+  else
+    # Older deployed contracts stored the descriptor hash directly and do not
+    # expose computeTermsHash. Falling back is safe only because the subsequent
+    # exact on-chain termsHash comparison must still match this legacy value.
+    expected_terms_hash="$TERMS_HASH"
+    echo "Target contract has no computeTermsHash; checking legacy invoice hash." >&2
   fi
   python3 - "$raw" "$DEPLOYER_ADDRESS" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" "$TOKEN" "$FACE_VALUE" "$expected_terms_hash" <<'INVOICEPY'
 import sys
