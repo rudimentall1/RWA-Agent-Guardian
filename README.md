@@ -8,7 +8,8 @@ The key rule is about invoice state, not just wallet balance: an agent cannot se
 
 ## Current scope
 
-- One Solidity settlement contract and an ERC-20-compatible test token.
+- One Solidity settlement contract, a synthetic ERC-20 payment token, and a narrow agent executor.
+- A separate test-only token fixture.
 - A synthetic invoice record bound to a terms hash, payer, beneficiary, payment token, face value, and due date.
 - Explicit lifecycle: REGISTERED → ACCEPTED → DISPUTED / SETTLED / CANCELLED.
 - Payer-controlled agent authorization, revocation, per-payment and aggregate limits.
@@ -18,6 +19,22 @@ The key rule is about invoice state, not just wallet balance: an agent cannot se
 ## Important limitations
 
 This is a hackathon prototype, not an audited financial product. The invoice and payment token used for tests are synthetic; no real receivable, legal ownership claim, or regulated asset is represented. The dispute resolver is a trusted role in this MVP and would need a real governance/dispute process in production.
+
+## Browser demo and Sepolia deployment
+
+The demo is a static page in **ui/**. It requires an injected wallet connected to Sepolia and public contract addresses in **ui/config.js**. Start the page from a local HTTP server rather than opening the file directly:
+
+    cd ui
+    python3 -m http.server 8091
+
+For a deployment, copy **.env.example** to **.env** and set the deployer key, payer wallet, and beneficiary address locally. Keep **.env** out of Git. Then run:
+
+    set -a
+    source ./.env
+    set +a
+    bash scripts/deploy-sepolia.sh
+
+The script deploys a synthetic payment token, the settlement contract, and a narrow agent executor; it registers a demo invoice and mints test tokens to the payer. Copy the resulting public addresses into **ui/config.js** based on **ui/config.example.js**. The connected payer must accept the invoice, approve and fund escrow, and authorize the executor before running the valid and over-limit scenarios.
 
 ## Build and test
 

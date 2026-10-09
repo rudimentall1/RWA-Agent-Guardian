@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RWA Agent Guardian — Invoice Settlement</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b1020; --panel:#141b2e; --line:#2c3650; --text:#eef2ff; --muted:#9eabc7; --blue:#91b9ff; --red:#ff8e9a; --green:#7be3b0; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:radial-gradient(ellipse at top,#172848 0%,var(--bg) 55%); color:var(--text); font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,sans-serif; }
+    main { max-width:980px; margin:0 auto; padding:36px 20px 64px; }
+    header { display:flex; gap:20px; align-items:flex-start; justify-content:space-between; margin-bottom:28px; flex-wrap:wrap; }
+    .eyebrow { color:var(--blue); text-transform:uppercase; letter-spacing:.14em; font-size:11px; font-weight:700; }
+    h1 { margin:8px 0; line-height:1.08; font-size:clamp(28px,5vw,42px); letter-spacing:-.04em; }
+    p { color:var(--muted); margin:8px 0; max-width:680px; }
+    button { border:1px solid var(--line); background:#202b43; color:var(--text); border-radius:10px; padding:11px 15px; font-weight:650; cursor:pointer; }
+    button.primary { background:#c2d8ff; border-color:#c2d8ff; color:#091329; }
+    button.warning { border-color:#71404c; background:#34202e; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .status { border:1px solid var(--line); border-radius:12px; padding:12px 14px; color:var(--muted); background:#11182a; margin:18px 0; overflow-wrap:anywhere; }
+    .status.good { border-color:#286c5b; color:var(--green); }
+    .status.bad { border-color:#81414d; color:var(--red); }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+    .panel { background:rgba(20,27,46,.92); border:1px solid var(--line); border-radius:16px; padding:20px; min-width:0; }
+    .panel h2 { margin:0 0 14px; font-size:16px; }
+    .metric { display:flex; justify-content:space-between; gap:18px; padding:10px 0; border-bottom:1px solid #263047; }
+    .metric:last-child { border-bottom:0; }
+    .metric span { color:var(--muted); }
+    .metric strong { text-align:right; overflow-wrap:anywhere; }
+    .steps { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .step { padding:13px; border:1px solid #293650; border-radius:12px; }
+    .step small { color:var(--muted); display:block; margin-bottom:8px; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+    input { background:#0b1222; border:1px solid var(--line); color:var(--text); padding:11px; border-radius:9px; width:130px; }
+    code { color:#c1d6ff; overflow-wrap:anywhere; }
+    .wide { grid-column:1 / -1; }
+    footer { color:var(--muted); font-size:12px; margin-top:20px; }
+    @media(max-width:700px) { .grid,.steps { grid-template-columns:1fr; } .wide { grid-column:auto; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <div class="eyebrow">RWA · onchain invoice settlement</div>
+      <h1>Let the agent pay.<br>Keep the mandate in control.</h1>
+      <p>The payer accepts a synthetic invoice, funds escrow, and authorizes a narrowly capped agent executor. The contract enforces the mandate and invoice state when settlement is attempted.</p>
+    </div>
+    <button class="primary" id="connect">Connect wallet</button>
+  </header>
+
+  <div id="notice" class="status">Connect a wallet on Sepolia to inspect the invoice and run the demo.</div>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Invoice INV-1001</h2>
+      <div class="metric"><span>Face value</span><strong>10,000 dUSD</strong></div>
+      <div class="metric"><span>Settlement state</span><strong id="invoiceState">—</strong></div>
+      <div class="metric"><span>Escrow funded</span><strong id="funded">—</strong></div>
+      <div class="metric"><span>Already paid</span><strong id="paid">—</strong></div>
+      <div class="metric"><span>Token balance</span><strong id="balance">—</strong></div>
+      <div class="row"><button id="refresh">Refresh state</button></div>
+    </section>
+
+    <section class="panel">
+      <h2>Addresses</h2>
+      <div class="metric"><span>Connected payer</span><strong id="payer">—</strong></div>
+      <div class="metric"><span>Beneficiary</span><strong id="beneficiary">—</strong></div>
+      <div class="metric"><span>Agent executor</span><strong id="executor">—</strong></div>
+      <div class="metric"><span>Network</span><strong id="network">Sepolia · 11155111</strong></div>
+    </section>
+
+    <section class="panel wide">
+      <h2>1. Prepare the invoice</h2>
+      <div class="steps">
+        <div class="step"><small>Step 1</small><strong>Accept invoice</strong><div class="row"><button id="accept">Accept invoice</button></div></div>
+        <div class="step"><small>Step 2</small><strong>Approve payment token</strong><div class="row"><button id="approve">Approve 10,000 dUSD</button></div></div>
+        <div class="step"><small>Step 3</small><strong>Deposit funds into escrow</strong><div class="row"><button id="fund">Fund escrow</button></div></div>
+        <div class="step"><small>Step 4</small><strong>Set agent mandate</strong><div class="row"><button id="authorize">Authorize agent</button></div><small>2,000 dUSD per payment · 5,000 dUSD total · 7-day expiry</small></div>
+      </div>
+    </section>
+
+    <section class="panel wide">
+      <h2>2. Check before signing</h2>
+      <p>The preflight is a read-only simulation. A rejected action is shown as BLOCK and does not open the wallet prompt.</p>
+      <label for="amount">Settlement amount (dUSD)</label>
+      <input id="amount" value="2000" inputmode="decimal">
+      <div class="row">
+        <button class="primary" id="preflight">Check authorization</button>
+        <button id="execute">Execute allowed settlement</button>
+        <button class="warning" id="attack">Simulate 3,000 dUSD attack</button>
+      </div>
+      <div id="decision" class="status">No action checked yet.</div>
+    </section>
+  </div>
+
+  <footer>
+    Demo only. dUSD and the invoice are synthetic Sepolia fixtures, not a real stablecoin, a legal receivable, or evidence of regulated asset ownership. This prototype is unaudited. Ethereum enforces the settlement checks; this page does not replace them.
+  </footer>
+</main>
+
+<script src="./config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.15.0/dist/ethers.umd.min.js"></script>
+<script>
+(() => {
+  const cfg = window.AEGIS_CONFIG;
+  const $ = (id) => document.getElementById(id);
+  const states = ["NONE", "REGISTERED", "ACCEPTED", "DISPUTED", "SETTLED", "CANCELLED"];
+  const tokenAbi = [
+    "function balanceOf(address) view returns (uint256)",
+    "function approve(address,uint256) returns (bool)"
+  ];
+  const settlementAbi = [
+    "function invoices(bytes32) view returns (address issuer,address payer,address beneficiary,address token,uint128 faceValue,uint128 funded,uint128 paid,uint64 dueAt,bytes32 termsHash,uint8 status)",
+    "function mandates(bytes32,address) view returns (uint128 perPaymentLimit,uint128 totalLimit,uint128 spent,uint64 expiresAt,uint64 nonce,bool active)",
+    "function acceptInvoice(bytes32)",
+    "function fundInvoice(bytes32,uint128)",
+    "function authorizeAgent(bytes32,address,uint128,uint128,uint64)"
+  ];
+  const executorAbi = ["function execute(bytes32,uint128,uint64,uint64)"];
+  let provider, signer, userAddress, token, settlement, executor, lastCheckedAmount;
+
+  function note(message, kind = "") {
+    $("notice").textContent = message;
+    $("notice").className = "status" + (kind ? " " + kind : "");
+  }
+  function decision(message, kind = "") {
+    $("decision").textContent = message;
+    $("decision").className = "status" + (kind ? " " + kind : "");
+  }
+  function assertConfigured() {
+    if (!cfg || !cfg.token || !cfg.settlement || !cfg.agentExecutor || !cfg.invoiceId ||
+        cfg.token.endsWith("0000000000000000000000000000000000000000")) {
+      throw new Error("Deployment addresses are missing. Fill ui/config.js from the Sepolia deployment.");
+    }
+  }
+  function amount6(value) {
+    if (!/^\d+(\.\d{1,6})?$/.test(value.trim())) throw new Error("Enter a non-negative amount with up to 6 decimals.");
+    return ethers.parseUnits(value.trim(), 6);
+  }
+  async function connected() {
+    assertConfigured();
+    if (!signer) throw new Error("Connect your wallet first.");
+    const network = await provider.getNetwork();
+    if (Number(network.chainId) !== Number(cfg.chainId)) throw new Error("Switch your wallet to Sepolia (chain 11155111).");
+    if (settlement && userAddress) {
+      const invoice = await settlement.invoices(cfg.invoiceId);
+      if (invoice.payer.toLowerCase() !== userAddress.toLowerCase()) {
+        throw new Error("Connect the payer wallet registered for this invoice.");
+      }
+    }
+  }
+  async function tx(label, action) {
+    try {
+      await connected();
+      note(label + " — waiting for wallet confirmation…");
+      const response = await action();
+      note(label + " — transaction submitted: " + response.hash);
+      const receipt = await response.wait();
+      if (receipt.status !== 1) throw new Error("Transaction reverted.");
+      note(label + " — confirmed in block " + receipt.blockNumber, "good");
+      await refresh();
+      return receipt;
+    } catch (error) {
+      note(error.shortMessage || error.reason || error.message || String(error), "bad");
+      throw error;
+    }
+  }
+  async function connect() {
+    assertConfigured();
+    if (!window.ethereum) throw new Error("MetaMask or another injected wallet is required.");
+    provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    signer = await provider.getSigner();
+    userAddress = await signer.getAddress();
+    const network = await provider.getNetwork();
+    $("connect").textContent = userAddress.slice(0, 6) + "…" + userAddress.slice(-4);
+    $("payer").textContent = userAddress;
+    $("network").textContent = network.name + " · " + network.chainId;
+    token = new ethers.Contract(cfg.token, tokenAbi, signer);
+    settlement = new ethers.Contract(cfg.settlement, settlementAbi, signer);
+    executor = new ethers.Contract(cfg.agentExecutor, executorAbi, signer);
+    await refresh();
+    note("Wallet connected. Review the invoice state before authorizing or settling.", "good");
+  }
+  async function refresh() {
+    await connected();
+    const inv = await settlement.invoices(cfg.invoiceId);
+    const mandate = await settlement.mandates(cfg.invoiceId, cfg.agentExecutor);
+    const balance = await token.balanceOf(userAddress);
+    $("invoiceState").textContent = states[Number(inv.status)] || String(inv.status);
+    $("funded").textContent = ethers.formatUnits(inv.funded, 6) + " dUSD";
+    $("paid").textContent = ethers.formatUnits(inv.paid, 6) + " dUSD";
+    $("balance").textContent = ethers.formatUnits(balance, 6) + " dUSD";
+    $("beneficiary").textContent = inv.beneficiary;
+    $("executor").textContent = cfg.agentExecutor;
+    $("payer").textContent = inv.payer;
+    $("network").textContent = "Sepolia · " + cfg.chainId;
+    $("authorize").textContent = mandate.active ? "Update agent mandate" : "Authorize agent";
+  }
+  async function accept() {
+    return tx("Accept invoice", () => settlement.acceptInvoice(cfg.invoiceId));
+  }
+  async function approve() {
+    return tx("Approve payment token", () => token.approve(cfg.settlement, ethers.parseUnits("10000", 6)));
+  }
+  async function fund() {
+    return tx("Fund escrow", () => settlement.fundInvoice(cfg.invoiceId, ethers.parseUnits("10000", 6)));
+  }
+  async function authorize() {
+    const expiry = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60);
+    return tx("Authorize agent", () => settlement.authorizeAgent(
+      cfg.invoiceId,
+      cfg.agentExecutor,
+      ethers.parseUnits("2000", 6),
+      ethers.parseUnits("5000", 6),
+      expiry
+    ));
+  }
+  async function preflight(value) {
+    await connected();
+    const rawAmount = amount6(value);
+    const mandate = await settlement.mandates(cfg.invoiceId, cfg.agentExecutor);
+    if (!mandate.active) throw new Error("No active mandate. Authorize the agent first.");
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const deadline = now + 3600n < mandate.expiresAt ? now + 3600n : mandate.expiresAt;
+    try {
+      await executor.execute.staticCall(cfg.invoiceId, rawAmount, mandate.nonce, deadline);
+      lastCheckedAmount = rawAmount;
+      decision("ALLOW — action passes the current onchain mandate. No transaction has been sent yet.", "good");
+      return { rawAmount, nonce: mandate.nonce, deadline };
+    } catch (error) {
+      lastCheckedAmount = null;
+      decision("BLOCK — onchain simulation rejected the request. Wallet signing was not requested. " +
+        (error.revert?.name || error.reason || error.shortMessage || "Policy check failed."), "bad");
+      throw error;
+    }
+  }
+  async function checkButton() {
+    try { await preflight($("amount").value); }
+    catch (_) { /* decision panel already contains the reason */ }
+  }
+  async function execute() {
+    try {
+      const checked = await preflight($("amount").value);
+      return await tx("Execute authorized settlement", () =>
+        executor.execute(cfg.invoiceId, checked.rawAmount, checked.nonce, checked.deadline)
+      );
+    } catch (_) { /* keep the preflight or transaction result visible */ }
+  }
+  async function attack() {
+    $("amount").value = "3000";
+    try { await preflight("3000"); }
+    catch (_) { /* expected: a 3,000 dUSD request exceeds the 2,000 cap */ }
+  }
+
+  $("connect").addEventListener("click", () => connect().catch(e => note(e.message, "bad")));
+  $("refresh").addEventListener("click", () => refresh().then(() => note("Invoice state refreshed.", "good")).catch(e => note(e.message, "bad")));
+  $("accept").addEventListener("click", () => accept().catch(() => {}));
+  $("approve").addEventListener("click", () => approve().catch(() => {}));
+  $("fund").addEventListener("click", () => fund().catch(() => {}));
+  $("authorize").addEventListener("click", () => authorize().catch(() => {}));
+  $("preflight").addEventListener("click", checkButton);
+  $("execute").addEventListener("click", execute);
+  $("attack").addEventListener("click", attack);
+  if (!cfg) note("Missing ui/config.js. Copy config.example.js and set deployed Sepolia addresses.", "bad");
+})();
+</script>
+</body>
+</html>

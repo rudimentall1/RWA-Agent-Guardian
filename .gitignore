@@ -6,4 +6,5 @@ cache/
 broadcast/
 lib/
 node_modules/
+.deploy_key
 .DS_Store

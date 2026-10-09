@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "../contracts/InvoiceSettlement.sol";
+import "../contracts/DemoAgentExecutor.sol";
 import "./TestToken.sol";
 
 interface Vm {
@@ -43,6 +44,26 @@ contract InvoiceSettlementTest {
         settlement.fundInvoice(INVOICE_ID, 10_000);
         vm.prank(PAYER);
         settlement.authorizeAgent(INVOICE_ID, AGENT, 2_000, 5_000, mandateExpiry);
+    }
+
+    function testDemoExecutorCanSettleWhenItsAddressHasAMandate() public {
+        DemoAgentExecutor executor = new DemoAgentExecutor(address(settlement), PAYER);
+        vm.prank(PAYER);
+        settlement.authorizeAgent(INVOICE_ID, address(executor), 2_000, 5_000, mandateExpiry);
+
+        vm.prank(PAYER);
+        executor.execute(INVOICE_ID, 2_000, 0, uint64(block.timestamp + 1 hours));
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        require(inv.paid == 2_000, "executor settlement not recorded");
+        require(token.balanceOf(BENEFICIARY) == 2_000, "beneficiary not paid");
+    }
+
+    function testDemoExecutorRejectsCallsFromNonOwner() public {
+        DemoAgentExecutor executor = new DemoAgentExecutor(address(settlement), PAYER);
+        vm.expectRevert(DemoAgentExecutor.Unauthorized.selector);
+        vm.prank(STRANGER);
+        executor.execute(INVOICE_ID, 1_000, 0, uint64(block.timestamp + 1 hours));
     }
 
     function testAgentCanMakeAuthorizedPartialSettlement() public {
