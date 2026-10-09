@@ -1,42 +1,45 @@
 # RWA-Agent-Guardian — demo evidence (2026-10-09)
 
-This note records the Sepolia demo state observed during the hackathon walkthrough. It is evidence of a testnet prototype run, not a security audit or a claim about real-world assets.
+This note records the currently configured Sepolia demo and the contract state read directly from the RPC. It describes a testnet prototype, not an audit or a claim about real-world assets.
 
 ## Public demo
 
 - UI: https://rudimentall1.github.io/RWA-Agent-Guardian/
 - Network: Ethereum Sepolia (chain ID `11155111`)
-- Invoice: `INV-1001`
-- Invoice face value: `10,000 dUSD` (synthetic demo token)
+- Invoice ID: `0xe4f729cc5c74e26942b90175714ea77f0711eb25e5ea3b3620ff097d6805a571`
+- Invoice face value: `10,000 dUSD` (synthetic demo token; 6 decimals)
+- Token: `0x5BbCBE09abAdE15Fbf9a36caB689675F58b50A71`
+- InvoiceSettlement: `0x4932eF4E444622F7C85be8CD7c85e0a4D2285885`
+- DemoAgentExecutor: `0x0f894f3369D8B9aFfa65fca66B2d3712e829EAE7`
 - Payer: `0x1429906b663608DB6aDeAb8F975B47aFbbe8c68C`
 - Beneficiary: `0x000000000000000000000000000000000000b0b0`
-- Agent executor: `0x29a88F9571295ab5685f4DDc0C7D63dDC26f8c28`
-- Mandate shown in UI: `2,000 dUSD` maximum per payment, `5,000 dUSD` cumulative cap, 7-day expiry.
 
-## Observed checks
+## State read from Sepolia RPC
 
-- Preflight for `2,000 dUSD`: `ALLOW`; the UI states no transaction is sent by preflight.
-- Preflight for `3,000 dUSD`: `BLOCK`; the UI states wallet signing was not requested and the onchain simulation reverted.
-- After settlement activity, the UI showed `Already paid: 4,000 dUSD`.
-- Latest supplied UI state showed `Already paid: 5,000 dUSD`, `Escrow funded: 10,000 dUSD`, `Token balance: 0 dUSD`, invoice state `ACCEPTED`, and a further `3,000 dUSD` attack simulation returning `BLOCK`.
+At the time of this check:
 
-These are UI-observed states supplied during the demo walkthrough. Transaction-to-amount mapping and receipt details should be independently checked on Etherscan before using this note as a formal test report.
+- Invoice status: `ACCEPTED`.
+- Escrow funded: `10,000 dUSD`.
+- Settled: `5,000 dUSD`.
+- Token balance held by the settlement contract: `5,000 dUSD`.
+- Payer token balance: `0 dUSD`.
+- Executor mandate: active; per-payment cap `2,000 dUSD`; aggregate cap `5,000 dUSD`; spent `5,000 dUSD`.
+- The public demo configuration matches the contract addresses above.
 
-## Transaction links supplied during the walkthrough
+These are current contract-state reads, not a substitute for inspecting individual transaction receipts. The expected scenario is: preflight `2,000 dUSD` → ALLOW; preflight `3,000 dUSD` → BLOCK; execute permitted settlements up to the `5,000 dUSD` aggregate cap; then a further attempt → BLOCK.
 
-- Invoice registration: https://sepolia.etherscan.io/tx/0x5e61c2b6424ef057711344d470c5ff25369894a2c745e411e1bd8c13df134f47
-- Token mint: https://sepolia.etherscan.io/tx/0xe546aeeb306072bf2c277aeb243dd7f58998da66659dc5e28a6866e30b438242
-- Other supplied transaction: https://sepolia.etherscan.io/tx/0xc2b614b6110688c1a3eec7eb894f78660fb5e2a7b894499771787655cada7c8d
-- Other supplied transaction: https://sepolia.etherscan.io/tx/0xf19743b92c69699aa0f52950ee4ea76aa7f19bd7fc029a4602fbc0c274a77bd1
-- Other supplied transaction: https://sepolia.etherscan.io/tx/0x2b5881f305b15748c2b56353b148f458c75f379d63b4615c1abd734ba86ce41e
-- Other supplied transaction: https://sepolia.etherscan.io/tx/0x170aefe3d846390fc48c5231ff8a3bb290167f2daadf4fec6e3a5a3bf16ee8cb
-- Preflight-related transaction link supplied by user: https://sepolia.etherscan.io/tx/0x8d090a6987454e024ac01d7dd1a5b9edb4b91015f6135cc313344ae37a9115f9
-- Settlement-related transaction link supplied by user: https://sepolia.etherscan.io/tx/0xc0d68c7571af4671dd5549f29708290826ead49f51d253aa39d6bc0d5f75ad28
-- Latest transaction link supplied with the `5,000 dUSD` UI state: https://sepolia.etherscan.io/tx/0xe7af7eb08274dd0573ba13b23a8c740ce05c2813ab70d9efcea8de44cb5cb7dd
+## Known transaction records for the current deployment
+
+- InvoiceSettlement deployment: https://sepolia.etherscan.io/tx/0xbc77075f8f7e84a44b3e1819bfbfb2107ea17d5933e5735ea423683ee22d08fb
+- DemoAgentExecutor deployment: https://sepolia.etherscan.io/tx/0x489dc887df8f99239e95f80e4e951aca89f909d49497f87129b20fbe19852108
+- Invoice registration: https://sepolia.etherscan.io/tx/0x8d5bc5df144898f06bc20d99b1c6c1c3f053b5ed2e3a6c33693d122380a43c3c
+- Payer token mint: https://sepolia.etherscan.io/tx/0x348c32ccfdabbdccd574f31dac1362959a7d72e807ed6bbabd386df76c2b8bd8
+
+Only transaction records identified for this deployment are listed here. Do not attribute records from the earlier contract deployment to the current contracts.
 
 ## Scope and limitations
 
 - dUSD and invoice data are synthetic Sepolia fixtures, not a real stablecoin, legal receivable, or evidence of regulated asset ownership.
 - This prototype is unaudited.
 - A preflight `ALLOW` is not a settlement receipt; verify transaction status, emitted events, and resulting contract state separately.
-- A reverted simulation confirms a rejection, but its exact reason should be decoded from the contract error before attributing it to a specific guard.
+- A reverted simulation confirms rejection, but its exact reason should be decoded from the contract error before attributing it to a specific guard.
