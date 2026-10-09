@@ -42,6 +42,7 @@ contract InvoiceSettlement {
     address public immutable disputeResolver;
     mapping(bytes32 => Invoice) public invoices;
     mapping(bytes32 => mapping(address => Mandate)) public mandates;
+    mapping(bytes32 => uint64) public latestMandateExpiry;
     bool private entered;
 
     error Unauthorized();
@@ -77,6 +78,7 @@ contract InvoiceSettlement {
     event InvoiceDisputed(bytes32 indexed invoiceId, address indexed payer);
     event DisputeResolved(bytes32 indexed invoiceId, bool resumed);
     event InvoiceRefunded(bytes32 indexed invoiceId, address indexed payer, uint256 amount);
+    event InvoiceCancelled(bytes32 indexed invoiceId, address indexed payer, uint256 refunded);
     event SettlementExecuted(
         bytes32 indexed invoiceId,
         address indexed agent,
@@ -177,6 +179,7 @@ contract InvoiceSettlement {
         m.totalLimit = totalLimit;
         m.expiresAt = expiresAt;
         m.active = true;
+        if (expiresAt > latestMandateExpiry[invoiceId]) latestMandateExpiry[invoiceId] = expiresAt;
 
         emit AgentAuthorized(invoiceId, agent, perPaymentLimit, totalLimit, expiresAt);
     }
@@ -198,6 +201,29 @@ contract InvoiceSettlement {
 
         inv.status = Status.DISPUTED;
         emit InvoiceDisputed(invoiceId, msg.sender);
+    }
+
+    /// @notice Lets the payer recover unused escrow after every authorized mandate must have expired.
+    /// @dev The latest expiry is monotonic, so reauthorizing an agent extends the cancellation wait.
+    function cancelExpiredInvoice(bytes32 invoiceId) external nonReentrant {
+        Invoice storage inv = _invoice(invoiceId);
+        if (msg.sender != inv.payer) revert Unauthorized();
+        if (inv.status != Status.ACCEPTED) revert WrongStatus();
+
+        uint64 latestExpiry = latestMandateExpiry[invoiceId];
+        if (latestExpiry == 0) {
+            if (block.timestamp < inv.dueAt) revert InvalidDeadline();
+        } else if (block.timestamp <= latestExpiry) {
+            revert InvalidDeadline();
+        }
+
+        inv.status = Status.CANCELLED;
+        uint256 refund = uint256(inv.funded) - inv.paid;
+        if (refund > 0 && !IERC20Settlement(inv.token).transfer(inv.payer, refund)) {
+            revert TransferFailed();
+        }
+        if (refund > 0) emit InvoiceRefunded(invoiceId, inv.payer, refund);
+        emit InvoiceCancelled(invoiceId, inv.payer, refund);
     }
 
     function resolveDispute(bytes32 invoiceId, bool resume) external nonReentrant {
