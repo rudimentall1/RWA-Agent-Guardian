@@ -400,4 +400,30 @@ contract InvoiceSettlementTest {
         require(token.balanceOf(BENEFICIARY) == 4_000, "rejected payment transferred tokens");
     }
 
+
+    function testDemoScenarioAllowsTwoThousandBlocksThreeThousandAndStopsAtFiveThousand() public {
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 2_000, 0, uint64(block.timestamp + 1 hours));
+
+        vm.expectRevert(InvoiceSettlement.AgentLimitExceeded.selector);
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 3_000, 1, uint64(block.timestamp + 1 hours));
+
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 2_000, 1, uint64(block.timestamp + 1 hours));
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 1_000, 2, uint64(block.timestamp + 1 hours));
+
+        vm.expectRevert(InvoiceSettlement.AgentLimitExceeded.selector);
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 1, 3, uint64(block.timestamp + 1 hours));
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        InvoiceSettlement.Mandate memory mandate = settlement.getMandate(INVOICE_ID, AGENT);
+        require(inv.paid == 5_000, "demo did not stop at aggregate cap");
+        require(mandate.spent == 5_000 && mandate.nonce == 3, "blocked calls changed mandate");
+        require(token.balanceOf(BENEFICIARY) == 5_000, "beneficiary received unexpected amount");
+        require(token.balanceOf(address(settlement)) == 5_000, "remaining escrow mismatch");
+    }
+
 }
