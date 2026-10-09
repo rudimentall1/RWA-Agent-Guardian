@@ -181,6 +181,14 @@ def verify_execution_transaction(proof, rpc, executor):
     if words[:6] != expected_words:
         raise SystemExit("Recorded transaction parameters do not match the signed intent")
 
+    # The seventh ABI argument is dynamic bytes: offset, byte length, then signature.
+    if len(words) < 8 or int(words[6], 16) != 7 * 32 or int(words[7], 16) != 65:
+        raise SystemExit("Recorded calldata has an invalid signature offset or length")
+    signature_start = (7 * 32 + 32) * 2
+    recorded_signature = "0x" + raw[signature_start:signature_start + 65 * 2]
+    if recorded_signature.lower() != proof["signature"].lower():
+        raise SystemExit("Transaction signature bytes do not match the evidence file")
+
     receipt_status = receipt.get("status", "0x0")
     try:
         successful = int(receipt_status, 16) == 1 if isinstance(receipt_status, str) else int(receipt_status) == 1
