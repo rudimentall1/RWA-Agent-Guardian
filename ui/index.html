@@ -125,6 +125,8 @@
   const settlementAbi = [
     "function invoices(bytes32) view returns (address issuer,address payer,address beneficiary,address token,uint128 faceValue,uint128 funded,uint128 paid,uint64 dueAt,bytes32 termsHash,uint8 status)",
     "function mandates(bytes32,address) view returns (uint128 perPaymentLimit,uint128 totalLimit,uint128 spent,uint64 expiresAt,uint64 nonce,bool active)",
+    "function invoiceDocumentHashes(bytes32) view returns (bytes32)",
+    "function computeTermsHash(address,bytes32,address,address,address,uint128,uint64,bytes32) pure returns (bytes32)",
     "function acceptInvoice(bytes32)",
     "function fundInvoice(bytes32,uint128)",
     "function authorizeAgent(bytes32,address,uint128,uint128,uint64)",
@@ -322,12 +324,24 @@
     $("funded").textContent = formatDUSD(inv.funded) + " dUSD";
     $("paid").textContent = formatDUSD(inv.paid) + " dUSD";
     $("balance").textContent = formatDUSD(balance) + " dUSD";
-    const termsPreimage = "INV-1001|Synthetic invoice|10000 dUSD|NET30|v1";
-    const expectedTermsHash = ethers.keccak256(ethers.toUtf8Bytes(termsPreimage));
     $("termsHash").textContent = inv.termsHash;
-    $("termsCheck").textContent =
-      inv.termsHash.toLowerCase() === expectedTermsHash.toLowerCase() ?
-        "Preimage matches" : "Mismatch";
+    try {
+      const documentHash = await readSettlement.invoiceDocumentHashes(cfg.invoiceId);
+      const expectedTermsHash = await readSettlement.computeTermsHash(
+        inv.issuer, cfg.invoiceId, inv.payer, inv.beneficiary, inv.token,
+        inv.faceValue, inv.dueAt, documentHash
+      );
+      $("termsCheck").textContent =
+        inv.termsHash.toLowerCase() === expectedTermsHash.toLowerCase() ?
+          "Canonical fields and document hash match" : "Canonical commitment mismatch";
+    } catch (_) {
+      // Older public deployments predate the canonical commitment API.
+      const legacyPreimage = "INV-1001|Synthetic invoice|10000 dUSD|NET30|v1";
+      const legacyHash = ethers.keccak256(ethers.toUtf8Bytes(legacyPreimage));
+      $("termsCheck").textContent =
+        inv.termsHash.toLowerCase() === legacyHash.toLowerCase() ?
+          "Legacy descriptor matches; fields not bound" : "Commitment mismatch";
+    }
     $("mandateState").textContent = mandateStatus;
     $("perLimit").textContent = formatDUSD(mandate.perPaymentLimit) + " dUSD";
     $("totalLimit").textContent = formatDUSD(mandate.totalLimit) + " dUSD";
