@@ -33,5 +33,6 @@ jobs:
       # Intentional exclusions: balance-delta checks compare pre/post external token balances;
       # events are emitted after the guarded external call; timestamp comparisons enforce expiries.
       - run: slither . --exclude-dependencies --filter-paths 'test|script' --exclude reentrancy-balance,reentrancy-events,timestamp
+      - run: bash -n scripts/deploy-intent-executor-sepolia.sh
       - run: python -m py_compile scripts/agent_runner.py
       - run: python -m unittest discover -s scripts -p "test_*.py"
