@@ -3,8 +3,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
-from agent_runner import decode_words, load_agent_private_key, validate_config_shape, validate_runtime_config
+from unittest.mock import MagicMock, patch
+from urllib.error import URLError
+from agent_runner import (\n    ask_ollama, build_intent_typed_data, decode_words, load_agent_private_key,\n    parse_ai_decision, validate_config_shape, validate_runtime_config,\n)
 
 
 class AgentRunnerDecodeTests(unittest.TestCase):
@@ -78,12 +79,16 @@ class AgentRunnerDecodeTests(unittest.TestCase):
                 return config["settlement"]
             if args[0] == "call" and args[2] == "owner()(address)":
                 return config["agentOwner"]
+            if args[0] == "call" and args[2] == "intentDomainSeparator()(bytes32)":
+                return "0x" + "c" * 64
             raise AssertionError(f"Unexpected cast call: {args}")
 
         with patch("agent_runner.cast", side_effect=fake_cast), patch(
             "agent_runner.call_words", return_value=invoice
         ):
-            validate_runtime_config(config, "https://rpc.invalid", config["agentOwner"])
+            validate_runtime_config(
+                config, "https://rpc.invalid", config["agentOwner"], require_signed_intent=True
+            )
 
     def test_runtime_validation_rejects_missing_contract_code(self):
         config = self.valid_config()
@@ -98,6 +103,115 @@ class AgentRunnerDecodeTests(unittest.TestCase):
         with patch("agent_runner.cast", side_effect=fake_cast):
             with self.assertRaises(SystemExit):
                 validate_runtime_config(config, "https://rpc.invalid", config["agentOwner"])
+
+
+class AgentDecisionTests(unittest.TestCase):
+    def test_accepts_bounded_ollama_allow(self):
+        result = parse_ai_decision(
+            json.dumps({"decision": "ALLOW", "amount": 150, "reason": "Funds and mandate are available"}),
+            max_allowed=200,
+        )
+        self.assertEqual(result["decision"], "ALLOW")
+        self.assertEqual(result["amount"], 150)
+
+    def test_rejects_model_amount_above_policy_cap(self):
+        with self.assertRaisesRegex(SystemExit, "policy maximum"):
+            parse_ai_decision(
+                json.dumps({"decision": "ALLOW", "amount": 201, "reason": "try too much"}),
+                max_allowed=200,
+            )
+
+    def test_wait_and_block_must_have_zero_amount(self):
+        with self.assertRaisesRegex(SystemExit, "amount 0"):
+            parse_ai_decision(
+                json.dumps({"decision": "BLOCK", "amount": 1, "reason": "blocked"}),
+                max_allowed=200,
+            )
+
+    def test_rejects_boolean_as_integer_amount(self):
+        with self.assertRaisesRegex(SystemExit, "non-negative integer"):
+            parse_ai_decision(
+                json.dumps({"decision": "ALLOW", "amount": True, "reason": "bad type"}),
+                max_allowed=200,
+            )
+
+    def test_rejects_extra_or_missing_fields(self):
+        with self.assertRaisesRegex(SystemExit, "exactly"):
+            parse_ai_decision(
+                json.dumps({"decision": "ALLOW", "amount": 10, "reason": "ok", "extra": "ignored"}),
+                max_allowed=200,
+            )
+
+    def test_ollama_request_uses_json_schema_and_parses_content(self):
+        payload = {"message": {"content": json.dumps(
+            {"decision": "ALLOW", "amount": 75, "reason": "Within the funded limit"}
+        )}}
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode("utf-8")
+        with patch("agent_runner.urllib.request.urlopen", return_value=response) as open_url:
+            decision = ask_ollama(
+                {"status": 2}, 100, "qwen2.5:3b", "http://127.0.0.1:11434/api/chat"
+            )
+        self.assertEqual(decision["amount"], 75)
+        request = open_url.call_args.args[0]
+        sent = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(sent["model"], "qwen2.5:3b")
+        self.assertEqual(sent["format"]["additionalProperties"], False)
+        self.assertEqual(sent["options"]["temperature"], 0)
+
+    def test_ollama_service_failure_fails_closed(self):
+        with patch("agent_runner.urllib.request.urlopen", side_effect=URLError("offline")):
+            with self.assertRaisesRegex(SystemExit, "no transaction sent"):
+                ask_ollama({}, 100, "qwen2.5:3b", "http://127.0.0.1:11434/api/chat")
+
+    def test_ollama_malformed_model_output_fails_closed(self):
+        payload = {"message": {"content": "ALLOW 100"}}
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode("utf-8")
+        with patch("agent_runner.urllib.request.urlopen", return_value=response):
+            with self.assertRaisesRegex(SystemExit, "valid JSON"):
+                ask_ollama({}, 100, "qwen2.5:3b", "http://127.0.0.1:11434/api/chat")
+
+    def test_eip712_typed_data_binds_chain_executor_context_and_decision(self):
+        data = build_intent_typed_data(
+            11155111,
+            "0x" + "3" * 40,
+            "0x" + "a" * 64,
+            50,
+            4,
+            1_800_000_000,
+            "0x" + "b" * 64,
+            "0x" + "c" * 64,
+        )
+        self.assertEqual(data["domain"]["chainId"], 11155111)
+        self.assertEqual(data["domain"]["verifyingContract"], "0x" + "3" * 40)
+        self.assertEqual(data["primaryType"], "AgentIntent")
+        self.assertEqual(
+            [field["name"] for field in data["types"]["AgentIntent"]],
+            ["invoiceId", "amount", "nonce", "deadline", "contextHash", "decisionHash"],
+        )
+
+    def test_old_executor_is_rejected_in_signed_intent_mode(self):
+        config = AgentRunnerDecodeTests.valid_config()
+
+        def fake_cast(*args, **kwargs):
+            if args[0] == "chain-id":
+                return str(config["chainId"])
+            if args[0] == "code":
+                return "0x60006000"
+            if args[0] == "call" and args[2] == "settlement()(address)":
+                return config["settlement"]
+            if args[0] == "call" and args[2] == "owner()(address)":
+                return config["agentOwner"]
+            if args[0] == "call" and args[2] == "intentDomainSeparator()(bytes32)":
+                raise __import__("subprocess").CalledProcessError(1, ["cast"])
+            raise AssertionError(f"Unexpected cast call: {args}")
+
+        with patch("agent_runner.cast", side_effect=fake_cast):
+            with self.assertRaisesRegex(SystemExit, "does not support EIP-712 signed intents"):
+                validate_runtime_config(
+                    config, "https://rpc.invalid", config["agentOwner"], require_signed_intent=True
+                )
 
 
 if __name__ == "__main__":
