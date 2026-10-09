@@ -7,6 +7,7 @@ This runner executes only within the already-authorized on-chain mandate.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -60,18 +61,83 @@ def call_words(target, signature, *args, rpc, expected_words):
     return decode_words(raw, expected_words)
 
 
+ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]{40}\\Z")
+BYTES32_RE = re.compile(r"0x[0-9a-fA-F]{64}\\Z")
+
+
+def normalize_address(value, name):
+    if not isinstance(value, str) or not ADDRESS_RE.fullmatch(value):
+        raise SystemExit(f"Invalid {name} address in deployment config")
+    return value.lower()
+
+
+def validate_config_shape(config):
+    """Reject malformed or incomplete deployment settings before RPC calls."""
+    if not isinstance(config, dict):
+        raise SystemExit("Deployment config must be a JSON object")
+    chain_id = config.get("chainId")
+    if type(chain_id) is not int or chain_id <= 0:
+        raise SystemExit("Deployment config must contain a positive integer chainId")
+    for key in ("token", "settlement", "agentExecutor", "agentOwner"):
+        normalize_address(config.get(key), key)
+    invoice_id = config.get("invoiceId")
+    if not isinstance(invoice_id, str) or not BYTES32_RE.fullmatch(invoice_id):
+        raise SystemExit("Deployment config must contain a 32-byte invoiceId")
+
+
+def validate_runtime_config(config, rpc, agent_address):
+    """Check chain, code, executor bindings, and invoice token before any send."""
+    configured_owner = normalize_address(config["agentOwner"], "agentOwner")
+    if normalize_address(agent_address, "derived agent") != configured_owner:
+        raise SystemExit(
+            f"AGENT_PRIVATE_KEY address {agent_address} does not match configured agentOwner {config['agentOwner']}"
+        )
+
+    try:
+        live_chain_id = int(cast("chain-id", "--rpc-url", rpc))
+    except ValueError as exc:
+        raise SystemExit("RPC returned an invalid chain ID") from exc
+    if live_chain_id != config["chainId"]:
+        raise SystemExit(
+            f"RPC chain ID {live_chain_id} does not match deployment config {config['chainId']}; no transaction sent"
+        )
+
+    for key in ("token", "settlement", "agentExecutor"):
+        address = config[key]
+        code = cast("code", address, "--rpc-url", rpc)
+        if not code or code.strip().lower() == "0x":
+            raise SystemExit(f"No contract bytecode found for {key} at {address}; no transaction sent")
+
+    executor = config["agentExecutor"]
+    bound_settlement = cast("call", executor, "settlement()(address)", "--rpc-url", rpc)
+    bound_owner = cast("call", executor, "owner()(address)", "--rpc-url", rpc)
+    if normalize_address(bound_settlement, "executor settlement") != normalize_address(config["settlement"], "settlement"):
+        raise SystemExit("Executor is bound to a different settlement contract; no transaction sent")
+    if normalize_address(bound_owner, "executor owner") != configured_owner:
+        raise SystemExit("Executor owner does not match configured agentOwner; no transaction sent")
+
+    invoice = call_words(
+        config["settlement"], "invoices(bytes32)", config["invoiceId"], rpc=rpc, expected_words=10
+    )
+    invoice_token = f"0x{invoice[3]:040x}"
+    if normalize_address(invoice_token, "invoice token") != normalize_address(config["token"], "token"):
+        raise SystemExit("Invoice token does not match deployment config; no transaction sent")
+
+
 def main():
     config_path = Path(env("DEPLOYMENT_CONFIG", "deployments-sepolia.json"))
-    config = json.loads(config_path.read_text())
+    try:
+        config = json.loads(config_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Could not read deployment config {config_path}: {exc}") from exc
+    validate_config_shape(config)
     rpc = env("SEPOLIA_RPC_URL", "https://ethereum-sepolia-rpc.publicnode.com")
     private_key = load_agent_private_key()
     executor = config["agentExecutor"]
     settlement = config["settlement"]
     invoice_id = config["invoiceId"]
-    configured_owner = config.get("agentOwner")
     agent_address = cast("wallet", "address", "--private-key", private_key)
-    if configured_owner and agent_address.lower() != configured_owner.lower():
-        raise SystemExit(f"AGENT_PRIVATE_KEY address {agent_address} does not match configured agentOwner {configured_owner}")
+    validate_runtime_config(config, rpc, agent_address)
 
     payment = int(env("AGENT_PAYMENT_AMOUNT", "2000000000"))
     interval = max(1, int(env("AGENT_INTERVAL_SECONDS", "30")))
