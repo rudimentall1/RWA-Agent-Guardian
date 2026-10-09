@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from agent_runner import decode_words, load_agent_private_key
+from agent_runner import decode_words, load_agent_private_key, validate_config_shape, validate_runtime_config
 
 
 class AgentRunnerDecodeTests(unittest.TestCase):
@@ -34,6 +34,70 @@ class AgentRunnerDecodeTests(unittest.TestCase):
     def test_rejects_wrong_abi_response_length(self):
         with self.assertRaises(RuntimeError):
             decode_words("0x1234", 10)
+
+
+    @staticmethod
+    def valid_config():
+        return {
+            "chainId": 11155111,
+            "token": "0x" + "1" * 40,
+            "settlement": "0x" + "2" * 40,
+            "agentExecutor": "0x" + "3" * 40,
+            "agentOwner": "0x" + "4" * 40,
+            "invoiceId": "0x" + "a" * 64,
+        }
+
+    def test_config_requires_chain_addresses_and_bytes32_invoice(self):
+        config = self.valid_config()
+        config["invoiceId"] = "0x1234"
+        with self.assertRaises(SystemExit):
+            validate_config_shape(config)
+
+        config = self.valid_config()
+        config.pop("agentOwner")
+        with self.assertRaises(SystemExit):
+            validate_config_shape(config)
+
+    def test_runtime_validation_rejects_chain_mismatch_before_code_checks(self):
+        config = self.valid_config()
+        with patch("agent_runner.cast", return_value="1") as mocked_cast:
+            with self.assertRaises(SystemExit):
+                validate_runtime_config(config, "https://rpc.invalid", config["agentOwner"])
+        mocked_cast.assert_called_once_with("chain-id", "--rpc-url", "https://rpc.invalid")
+
+    def test_runtime_validation_checks_code_executor_bindings_and_invoice_token(self):
+        config = self.valid_config()
+        invoice = [0, 0, 0, int(config["token"], 16), 10000, 10000, 0, 0, 0, 2]
+
+        def fake_cast(*args, **kwargs):
+            if args[0] == "chain-id":
+                return str(config["chainId"])
+            if args[0] == "code":
+                return "0x60006000"
+            if args[0] == "call" and args[2] == "settlement()(address)":
+                return config["settlement"]
+            if args[0] == "call" and args[2] == "owner()(address)":
+                return config["agentOwner"]
+            raise AssertionError(f"Unexpected cast call: {args}")
+
+        with patch("agent_runner.cast", side_effect=fake_cast), patch(
+            "agent_runner.call_words", return_value=invoice
+        ):
+            validate_runtime_config(config, "https://rpc.invalid", config["agentOwner"])
+
+    def test_runtime_validation_rejects_missing_contract_code(self):
+        config = self.valid_config()
+
+        def fake_cast(*args, **kwargs):
+            if args[0] == "chain-id":
+                return str(config["chainId"])
+            if args[0] == "code":
+                return "0x"
+            raise AssertionError(f"Unexpected cast call: {args}")
+
+        with patch("agent_runner.cast", side_effect=fake_cast):
+            with self.assertRaises(SystemExit):
+                validate_runtime_config(config, "https://rpc.invalid", config["agentOwner"])
 
 
 if __name__ == "__main__":
