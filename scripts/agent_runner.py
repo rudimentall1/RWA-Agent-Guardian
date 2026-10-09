@@ -209,7 +209,7 @@ def ask_ollama(context, max_allowed, model, url, timeout_seconds=120):
         "model": model,
         "stream": False,
         "format": DECISION_SCHEMA,
-        "options": {"temperature": 0},
+        "options": {"temperature": 0, "num_ctx": 2048, "num_predict": 128},
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
