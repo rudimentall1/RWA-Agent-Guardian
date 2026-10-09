@@ -48,17 +48,33 @@ if [[ "${OWNER,,}" != "${CONFIG_OWNER,,}" ]]; then
   echo "AGENT_OWNER_ADDRESS differs from the configured owner; refusing to change signer identity." >&2
   exit 1
 fi
-if [[ -n "${EXISTING_SETTLEMENT_ADDRESS:-}" && "${SETTLEMENT,,}" != "${CONFIG_OWNER_SETTLEMENT,,}" ]]; then
-  # This branch is intentionally not used: shell variables cannot derive the config settlement
-  # through indirect naming. Exact config binding is checked explicitly below in Python.
-  :
-fi
 python3 - "$CONFIG_PATH" "$SETTLEMENT" <<'PY'
 import json, sys
 from pathlib import Path
 cfg = json.loads(Path(sys.argv[1]).read_text())
 if str(cfg["settlement"]).lower() != sys.argv[2].lower():
     print("Settlement override differs from deployment config; use a matching config copy.", file=sys.stderr)
+    raise SystemExit(1)
+PY
+
+python3 - "$UI_CONFIG_PATH" "$SETTLEMENT" "$OWNER" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+if not path.is_file():
+    print(f"UI config not found: {path}. No transaction sent.", file=sys.stderr)
+    raise SystemExit(1)
+text = path.read_text()
+prefix = "window.RWA_AGENT_GUARDIAN_CONFIG = "
+if not text.startswith(prefix) or not text.rstrip().endswith(";"):
+    print(f"Unexpected UI config format in {path}. No transaction sent.", file=sys.stderr)
+    raise SystemExit(1)
+data = json.loads(text[len(prefix):].strip()[:-1])
+if data.get("settlement", "").lower() != sys.argv[2].lower():
+    print("UI settlement differs from configured target. No transaction sent.", file=sys.stderr)
+    raise SystemExit(1)
+if data.get("agentOwner", "").lower() != sys.argv[3].lower():
+    print("UI agentOwner differs from configured owner. No transaction sent.", file=sys.stderr)
     raise SystemExit(1)
 PY
 
