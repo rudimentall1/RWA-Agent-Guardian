@@ -498,21 +498,61 @@ contract InvoiceSettlementTest {
         require(token.balanceOf(BENEFICIARY) == 10_000, "beneficiary did not receive remaining escrow");
     }
 
-    function testDisputeTimeoutReopensInvoice() public {
+    function testDisputeTimeoutEscalatesAndKeepsSettlementFrozen() public {
         vm.prank(PAYER);
         settlement.disputeInvoice(INVOICE_ID);
         vm.warp(block.timestamp + settlement.DISPUTE_TIMEOUT() + 1);
         settlement.expireDispute(INVOICE_ID);
         InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
-        require(inv.status == InvoiceSettlement.Status.ACCEPTED, "timed out dispute remains frozen");
+        require(inv.status == InvoiceSettlement.Status.ESCALATED, "timed out dispute was not escalated");
+
+        vm.expectRevert(InvoiceSettlement.WrongStatus.selector);
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 1_000, 0, uint64(block.timestamp + 1 hours));
     }
 
-    function testResolverCannotResolveAfterDisputeTimeout() public {
+    function testResolverCanResumeEscalatedDispute() public {
         vm.prank(PAYER);
         settlement.disputeInvoice(INVOICE_ID);
         vm.warp(block.timestamp + settlement.DISPUTE_TIMEOUT() + 1);
-        vm.expectRevert(InvoiceSettlement.InvalidDeadline.selector);
+        settlement.expireDispute(INVOICE_ID);
+        settlement.resolveDispute(INVOICE_ID, true);
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        require(inv.status == InvoiceSettlement.Status.ACCEPTED, "resolver did not resume invoice");
+        require(settlement.disputeStartedAt(INVOICE_ID) == 0, "dispute timestamp was not cleared");
+
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 1_000, 0, uint64(block.timestamp + 1 hours));
+        inv = settlement.getInvoice(INVOICE_ID);
+        require(inv.paid == 1_000, "settlement did not resume after resolver decision");
+    }
+
+    function testResolverCanCancelAndRefundEscalatedDispute() public {
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 2_000, 0, uint64(block.timestamp + 1 hours));
+        vm.prank(PAYER);
+        settlement.disputeInvoice(INVOICE_ID);
+
+        vm.warp(block.timestamp + settlement.DISPUTE_TIMEOUT() + 1);
+        settlement.expireDispute(INVOICE_ID);
         settlement.resolveDispute(INVOICE_ID, false);
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        require(inv.status == InvoiceSettlement.Status.CANCELLED, "escalated invoice not cancelled");
+        require(token.balanceOf(PAYER) == 8_000, "remaining escrow not refunded");
+        require(token.balanceOf(address(settlement)) == 0, "escrow should be empty");
+    }
+
+    function testOnlyResolverCanResolveEscalatedDispute() public {
+        vm.prank(PAYER);
+        settlement.disputeInvoice(INVOICE_ID);
+        vm.warp(block.timestamp + settlement.DISPUTE_TIMEOUT() + 1);
+        settlement.expireDispute(INVOICE_ID);
+
+        vm.expectRevert(InvoiceSettlement.Unauthorized.selector);
+        vm.prank(STRANGER);
+        settlement.resolveDispute(INVOICE_ID, true);
     }
 
     function testCannotRefundBeforeInvoiceDueDateEvenAfterMandateExpiry() public {
