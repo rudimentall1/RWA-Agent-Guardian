@@ -6,7 +6,7 @@ The prototype models a narrow trade-finance flow: an issuer attests to invoice t
 
 **[Watch the demo in your browser](https://rudimentall1.github.io/RWA-Agent-Guardian/video.html)**
 
-The key rule is about invoice state, not just wallet balance: the executor cannot settle an unaccepted or disputed invoice. Each mandate has a per-payment cap, an aggregate cap, an expiry, and a monotonic nonce. The source now checks exact token balance changes, supports resolver rotation by a privileged admin, and lets the payer recover unused escrow after the latest mandate expiry. These source-level hardening changes are not active on the already deployed Sepolia contracts.
+The key rule is about invoice state, not just wallet balance: the executor cannot settle an unaccepted or disputed invoice. Each mandate has a per-payment cap, an aggregate cap, an expiry, and a monotonic nonce. The source checks exact token balance changes, supports resolver rotation by a privileged admin, and includes expiry-related escrow paths. The current UI deployment addresses refer to the later deployment built from the current contract source; the earlier deployment used for the recorded three-payment sequence is a separate instance. See the deployment evidence for the exact addresses and transaction history.
 
 ## Current scope
 
@@ -49,7 +49,7 @@ A concise summary of the problem, implementation, demo links, test commands, pro
 
 The walkthrough has a browser-based player at [Watch the demo](https://rudimentall1.github.io/RWA-Agent-Guardian/video.html). The MP4 is also kept in **demo/** in this repository. The player uses the same video file and supports playback and seeking without requiring a manual download.
 
-The public deployment has already reached its 5,000 dUSD aggregate spending limit. This is the expected final state, so a new settlement preflight on that invoice should return BLOCK. The current deployment is not a resettable sandbox. It predates the latest source hardening; its contracts do not have the new expiry-refund, resolver-rotation, or exact-balance-transfer checks.
+The earlier deployment shown in the recorded payment sequence has reached its 5,000 dUSD aggregate spending limit, so further settlements on that invoice should return BLOCK. The current UI points to a separate later Sepolia deployment with a fresh demo state. It is not a resettable sandbox, and the two deployments must not be presented as one transaction history. See [the deployment evidence](docs/demo-evidence-2026-10-09.md) before quoting addresses or payment receipts.
 
 ## Threat model
 
