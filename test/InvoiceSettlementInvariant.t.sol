@@ -6,6 +6,8 @@ import "./TestToken.sol";
 
 interface VmInvariant {
     function prank(address sender) external;
+    function addr(uint256 privateKey) external returns (address);
+    function sign(uint256 privateKey, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
 }
 
 contract SettlementHandler {
@@ -37,14 +39,26 @@ contract InvoiceSettlementInvariantTest {
     bytes32 private constant ID = keccak256("INVARIANT-INVOICE");
     address private constant PAYER = address(0xB0B);
     address private constant BENEFICIARY = address(0xD00D);
+    uint256 private constant ISSUER_PRIVATE_KEY = 0xA77157;
+    address private issuer;
+
+    struct InvoiceRegistration {
+        bytes32 id;
+        uint128 faceValue;
+        uint64 dueAt;
+        bytes32 documentHash;
+        uint256 nonce;
+        uint64 deadline;
+        bytes signature;
+    }
 
     function setUp() public {
         token = new TestToken();
         settlement = new InvoiceSettlement(address(this));
-        settlement.setIssuerApproval(address(this), true);
+        issuer = vm.addr(ISSUER_PRIVATE_KEY);
         uint64 dueAt = uint64(block.timestamp + 30 days);
         uint64 expiry = uint64(block.timestamp + 20 days);
-        settlement.registerInvoice(ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, keccak256("invariant-doc"));
+        _registerInvariantInvoice(dueAt);
         vm.prank(PAYER);
         settlement.acceptInvoice(ID);
         token.mint(PAYER, 10_000);
@@ -55,6 +69,43 @@ contract InvoiceSettlementInvariantTest {
         handler = new SettlementHandler(settlement, token, ID, expiry);
         vm.prank(PAYER);
         settlement.authorizeAgent(ID, address(handler), 2_000, 5_000, expiry);
+    }
+
+    function _registerInvariantInvoice(uint64 dueAt) internal {
+        InvoiceRegistration memory request;
+        request.id = ID;
+        request.faceValue = 10_000;
+        request.dueAt = dueAt;
+        request.documentHash = keccak256("invariant-doc");
+        request.nonce = settlement.issuerNonces(issuer);
+        request.deadline = uint64(block.timestamp + 1 days);
+        bytes32 digest = settlement.issuerAttestationDigest(
+            request.id,
+            issuer,
+            PAYER,
+            BENEFICIARY,
+            address(token),
+            request.faceValue,
+            request.dueAt,
+            request.documentHash,
+            request.nonce,
+            request.deadline
+        );
+        (uint8 v, bytes32 r, bytes32 sigS) = vm.sign(ISSUER_PRIVATE_KEY, digest);
+        request.signature = abi.encodePacked(r, sigS, v);
+        vm.prank(issuer);
+        settlement.registerInvoice(
+            request.id,
+            PAYER,
+            BENEFICIARY,
+            address(token),
+            request.faceValue,
+            request.dueAt,
+            request.documentHash,
+            request.nonce,
+            request.deadline,
+            request.signature
+        );
     }
 
     function targetContracts() external view returns (address[] memory targets) {

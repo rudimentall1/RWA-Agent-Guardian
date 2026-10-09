@@ -12,7 +12,7 @@ A payment agent should not be able to spend an arbitrary amount just because it 
 
 ## What is implemented in the current source
 
-- Admin-managed issuer allowlist for invoice registration.
+- Permissionless invoice registration with a required EIP-712 issuer signature. The signature binds invoice terms and document hash to chain ID, settlement contract, nonce, and deadline; it is not proof of legal validity.
 - Invoice registration and payer acceptance.
 - Prefunded escrow settlement with partial payments.
 - Per-payment and aggregate mandate caps, expiry, nonce checks, and revocation.
@@ -21,7 +21,7 @@ A payment agent should not be able to spend an arbitrary amount just because it 
 - Exact token balance-delta checks and a canonical invoice commitment binding issuer, invoice ID, payer, beneficiary, token, face value, due date, and document hash.
 - A deterministic off-chain runner in `scripts/agent_runner.py` that executes only within on-chain mandate authority.
 - Foundry regression tests, three invariant properties, coverage reporting, and Slither analysis in CI.
-- A `New invoice` UI action for an approved issuer on deployments that include the current issuer-allowlist interface.
+- A `New invoice` UI action that lets an issuer create a signed invoice from its connected wallet on deployments with the current attestation interface.
 
 Ethereum is part of the enforcement boundary, not merely a record of the outcome. The contract rejects settlements that violate its state and mandate checks.
 
@@ -29,9 +29,9 @@ Ethereum is part of the enforcement boundary, not merely a record of the outcome
 
 The agent runner is a deterministic scheduler, not an LLM. The payer must still accept and fund the invoice and authorize the executor contract before scheduled payments can run. The agent-owner key must be separate from the payer key.
 
-The issuer allowlist is controlled by the settlement admin. It is not an independent issuer attestation, legal due diligence, or proof that the invoice represents an enforceable receivable. The invoice and dUSD token are synthetic test fixtures; they do not represent a real receivable, legal ownership claim, or regulated asset. The resolver and its administrator remain trusted roles. This prototype has not had an independent security audit and is not ready for production funds.
+Invoice registration is permissionless, but the EIP-712 signature proves only that the named issuer signed the specified terms. It is not legal due diligence or proof that the invoice represents an enforceable receivable. The invoice and dUSD token are synthetic test fixtures; they do not represent a real receivable, legal ownership claim, or regulated asset. The resolver and its administrator remain trusted roles. This prototype has not had an independent security audit and is not ready for production funds.
 
-The currently published Sepolia deployment is an older contract version. It has not been upgraded by these source changes and does not support the new issuer allowlist, beneficiary claim, dispute timeout, or new-invoice UI flow. Its existing invoice has already reached the 5,000 dUSD aggregate mandate cap, so new settlement attempts on that invoice should return BLOCK. A fresh deployment, on-chain verification, live agent-runner execution, and a new video recording are still pending.
+The currently published Sepolia deployment is an older contract version. It has not been upgraded by these source changes and does not support issuer attestations, beneficiary claim, dispute timeout, or the new-invoice UI flow. Its existing invoice has already reached the 5,000 dUSD aggregate mandate cap, so new settlement attempts on that invoice should return BLOCK. A fresh deployment, on-chain verification, live agent-runner execution, and a new video recording are still pending.
 
 A separate exploratory prototype informed the problem choice. This repository implements the invoice lifecycle, escrow settlement, and dispute-state enforcement as a separate codebase. The repository history should be used to assess what was built during the event; no claim is made that the broader idea originated during the event.
 

@@ -32,8 +32,8 @@ Sepolia activated Glamsterdam on 6 October. The EIP-8037/EIP-8038 changes repric
 
 ## Hardening added before submission
 
-- The settlement admin now maintains an issuer allowlist. This is a permissioning control, not a legal attestation or proof that an invoice is a real receivable.
+- Invoice registration is permissionless but requires an EIP-712 signature from the named issuer over the exact invoice fields, document hash, nonce, deadline, chain, and settlement contract. This verifies who signed the assertion; it does not prove legal validity or that a real receivable exists.
 - An unresolved dispute automatically reopens after seven days if the resolver has not acted. This avoids an indefinite protocol-level freeze but does not adjudicate the commercial dispute.
 - After the due date plus a 30-day grace period, and after the latest mandate expiry, the named beneficiary can claim the remaining funded escrow. The payer refund path is restricted to the grace window.
-- `scripts/agent_runner.py` is a deterministic off-chain scheduler. It reads the on-chain invoice and executor mandate, caps each payment to funded escrow and remaining mandate authority, and calls the executor using a separate agent-owner key. It is not an LLM or a production-grade autonomous agent.
+- `scripts/agent_runner.py` is a deterministic off-chain scheduler. It reads the on-chain invoice and executor mandate, caps each payment to funded escrow and remaining mandate authority, and calls the executor using an agent-owner key. It can load the key from a local JSON wallet file. It is not an LLM or a production-grade autonomous agent.
 - `test/InvoiceSettlementInvariant.t.sol` checks accounting and mandate invariants. CI now runs coverage and Slither with three documented detector exclusions for intentional balance-delta checks, event ordering, and timestamp-based expiry logic.

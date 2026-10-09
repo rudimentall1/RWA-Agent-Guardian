@@ -44,9 +44,15 @@ contract InvoiceSettlement {
     address public disputeResolver;
     address public immutable disputeResolverAdmin;
     bytes32 public constant INVOICE_TERMS_DOMAIN = keccak256("RWA_AGENT_GUARDIAN_INVOICE_V1");
+    bytes32 public constant EIP712_DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    bytes32 public constant ISSUER_ATTESTATION_TYPEHASH = keccak256(
+        "InvoiceAttestation(bytes32 invoiceId,address issuer,address payer,address beneficiary,address token,uint128 faceValue,uint64 dueAt,bytes32 documentHash,uint256 nonce,uint64 deadline)"
+    );
     uint64 public constant MAX_MANDATE_EXTENSION = 30 days;
     uint64 public constant DISPUTE_TIMEOUT = 7 days;
-    mapping(address => bool) public approvedIssuers;
+    mapping(address => uint256) public issuerNonces;
+    mapping(bytes32 => bytes32) public invoiceAttestationDigests;
     mapping(bytes32 => Invoice) public invoices;
     mapping(bytes32 => bytes32) public invoiceDocumentHashes;
     mapping(bytes32 => mapping(address => Mandate)) public mandates;
@@ -68,8 +74,18 @@ contract InvoiceSettlement {
     error TransferFailed();
     error Reentrancy();
     error InvalidResolver();
+    error InvalidAttestation();
+    error InvalidAttestationNonce();
 
-    event IssuerApprovalUpdated(address indexed issuer, bool approved);
+    event IssuerInvoiceAttested(
+        bytes32 indexed invoiceId,
+        address indexed issuer,
+        bytes32 indexed attestationDigest,
+        bytes32 termsHash,
+        bytes32 documentHash,
+        uint256 nonce,
+        bytes signature
+    );
     event InvoiceRegistered(
         bytes32 indexed invoiceId,
         address indexed issuer,
@@ -125,14 +141,6 @@ contract InvoiceSettlement {
         entered = false;
     }
 
-    /// @notice Admin-managed issuer allowlist for this prototype. This is not proof of a legal receivable.
-    function setIssuerApproval(address issuer, bool approved) external nonReentrant {
-        if (msg.sender != disputeResolverAdmin) revert Unauthorized();
-        if (issuer == address(0)) revert InvalidTerms();
-        approvedIssuers[issuer] = approved;
-        emit IssuerApprovalUpdated(issuer, approved);
-    }
-
     /// @notice Computes the canonical invoice commitment for a given on-chain record and document hash.
     function computeTermsHash(
         address issuer,
@@ -151,6 +159,55 @@ contract InvoiceSettlement {
         );
     }
 
+    function domainSeparator() public view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                EIP712_DOMAIN_TYPEHASH, keccak256("RWA Agent Guardian"), keccak256("1"), block.chainid, address(this)
+            )
+        );
+    }
+
+    function issuerAttestationDigest(
+        bytes32 invoiceId,
+        address issuer,
+        address payer,
+        address beneficiary,
+        address token,
+        uint128 faceValue,
+        uint64 dueAt,
+        bytes32 documentHash,
+        uint256 nonce,
+        uint64 deadline
+    ) public view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                ISSUER_ATTESTATION_TYPEHASH,
+                invoiceId,
+                issuer,
+                payer,
+                beneficiary,
+                token,
+                faceValue,
+                dueAt,
+                documentHash,
+                nonce,
+                deadline
+            )
+        );
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
+    }
+
+    function recoverIssuer(bytes32 digest, bytes calldata signature) public pure returns (address signer) {
+        if (signature.length != 65) revert InvalidAttestation();
+        bytes32 r = bytes32(signature[0:32]);
+        bytes32 sigS = bytes32(signature[32:64]);
+        uint8 v = uint8(signature[64]);
+        // Enforce canonical low-s signatures and standard recovery IDs.
+        if (uint256(sigS) > 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0 || (v != 27 && v != 28)) revert InvalidAttestation();
+        signer = ecrecover(digest, v, r, sigS);
+        if (signer == address(0)) revert InvalidAttestation();
+    }
+
     function registerInvoice(
         bytes32 invoiceId,
         address payer,
@@ -158,20 +215,43 @@ contract InvoiceSettlement {
         address token,
         uint128 faceValue,
         uint64 dueAt,
-        bytes32 documentHash
+        bytes32 documentHash,
+        uint256 issuerNonce,
+        uint64 attestationDeadline,
+        bytes calldata issuerSignature
     ) external nonReentrant {
         if (invoiceId == bytes32(0) || invoices[invoiceId].status != Status.NONE) {
             revert InvoiceExists(invoiceId);
         }
-        if (!approvedIssuers[msg.sender]) revert Unauthorized();
         if (
             payer == address(0) || beneficiary == address(0) || token == address(0) || payer == msg.sender
                 || payer == beneficiary || faceValue == 0 || dueAt <= block.timestamp
         ) revert InvalidTerms();
         if (documentHash == bytes32(0)) revert InvalidTerms();
+        if (issuerNonce != issuerNonces[msg.sender]) revert InvalidAttestationNonce();
+        if (attestationDeadline < block.timestamp) revert InvalidAttestation();
 
         bytes32 termsHash =
             computeTermsHash(msg.sender, invoiceId, payer, beneficiary, token, faceValue, dueAt, documentHash);
+        bytes32 attestationDigest = issuerAttestationDigest(
+            invoiceId,
+            msg.sender,
+            payer,
+            beneficiary,
+            token,
+            faceValue,
+            dueAt,
+            documentHash,
+            issuerNonce,
+            attestationDeadline
+        );
+        if (recoverIssuer(attestationDigest, issuerSignature) != msg.sender) revert InvalidAttestation();
+
+        issuerNonces[msg.sender] = issuerNonce + 1;
+        invoiceAttestationDigests[invoiceId] = attestationDigest;
+        emit IssuerInvoiceAttested(
+            invoiceId, msg.sender, attestationDigest, termsHash, documentHash, issuerNonce, issuerSignature
+        );
         invoiceDocumentHashes[invoiceId] = documentHash;
         invoices[invoiceId] = Invoice({
             issuer: msg.sender,

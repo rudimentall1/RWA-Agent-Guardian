@@ -28,6 +28,24 @@ def cast(*args, json_output=False):
     return result.stdout.strip()
 
 
+def load_agent_private_key():
+    """Load the agent signer from an environment variable or a local JSON wallet file."""
+    private_key = os.environ.get("AGENT_PRIVATE_KEY")
+    if private_key:
+        return private_key.strip()
+    wallet_path = os.environ.get("AGENT_WALLET_FILE")
+    if not wallet_path:
+        raise SystemExit("Set AGENT_PRIVATE_KEY or AGENT_WALLET_FILE; keep wallet secrets out of Git.")
+    wallet_data = json.loads(Path(wallet_path).read_text())
+    entries = wallet_data if isinstance(wallet_data, list) else [wallet_data]
+    if not entries or not isinstance(entries[0], dict):
+        raise SystemExit("Agent wallet file has an unsupported structure")
+    private_key = entries[0].get("private_key")
+    if not isinstance(private_key, str) or not private_key.strip():
+        raise SystemExit("Agent wallet file does not contain a private key")
+    return private_key.strip()
+
+
 def decode_words(raw, expected_words):
     data = raw.strip()
     if data.startswith("0x"):
@@ -46,7 +64,7 @@ def main():
     config_path = Path(env("DEPLOYMENT_CONFIG", "deployments-sepolia.json"))
     config = json.loads(config_path.read_text())
     rpc = env("SEPOLIA_RPC_URL", "https://ethereum-sepolia-rpc.publicnode.com")
-    private_key = env("AGENT_PRIVATE_KEY")
+    private_key = load_agent_private_key()
     executor = config["agentExecutor"]
     settlement = config["settlement"]
     invoice_id = config["invoiceId"]
@@ -69,9 +87,8 @@ def main():
             print(f"Stopping: invoice status={status}; only ACCEPTED (2) is executable", flush=True)
             return
         if paid >= funded:
-            print(f"Waiting: no funded unpaid escrow (funded={funded}, paid={paid})", flush=True)
-            time.sleep(interval)
-            continue
+            print(f"Stopping: no funded unpaid escrow remains (funded={funded}, paid={paid})", flush=True)
+            return
 
         mandate = call_words(settlement, "mandates(bytes32,address)", invoice_id, executor, rpc=rpc, expected_words=6)
         per_payment, total_limit, spent, expires_at, nonce = mandate[:5]
@@ -93,7 +110,7 @@ def main():
         tx = cast("send", executor, "execute(bytes32,uint128,uint64,uint64)", invoice_id,
                   str(remaining), str(nonce), str(deadline), "--rpc-url", rpc,
                   "--private-key", private_key)
-        print(f"Execution submitted: {tx}", flush=True)
+        print(f"Execution confirmed: {tx}", flush=True)
         payments_sent += 1
         if payments_sent < max_payments:
             time.sleep(interval)

@@ -354,15 +354,21 @@ INVOICEPY
 
 INVOICE_STATE="$(read_invoice_state)"
 if [[ "$INVOICE_STATE" == "MISSING" ]]; then
-  # New source requires an approved issuer. If this is an older settlement contract,
-  # the call fails before invoice registration; no invoice write is sent.
-  send_and_confirm "approve invoice issuer" "$SETTLEMENT" "setIssuerApproval(address,bool)" "$DEPLOYER_ADDRESS" true
+  # New source verifies the issuer's EIP-712 signature before storing the invoice.
   CHAIN_TIMESTAMP="$(cast block latest --rpc-url "$SEPOLIA_RPC_URL" --json | python3 -c 'import json,sys; print(int(json.load(sys.stdin)["timestamp"], 16))')"
   DUE_AT="$((CHAIN_TIMESTAMP + 2592000))"
-  send_and_confirm "register invoice" "$SETTLEMENT" \
-    "registerInvoice(bytes32,address,address,address,uint128,uint64,bytes32)" \
+  ISSUER_NONCE="$(cast call "$SETTLEMENT" "issuerNonces(address)(uint256)" "$DEPLOYER_ADDRESS" --rpc-url "$SEPOLIA_RPC_URL")"
+  ATTESTATION_DEADLINE="$((CHAIN_TIMESTAMP + 86400))"
+  ATTESTATION_DIGEST="$(cast call "$SETTLEMENT" \
+    "issuerAttestationDigest(bytes32,address,address,address,address,uint128,uint64,bytes32,uint256,uint64)(bytes32)" \
+    "$INVOICE_ID" "$DEPLOYER_ADDRESS" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" "$TOKEN" \
+    "$FACE_VALUE" "$DUE_AT" "$TERMS_HASH" "$ISSUER_NONCE" "$ATTESTATION_DEADLINE" \
+    --rpc-url "$SEPOLIA_RPC_URL")"
+  ISSUER_SIGNATURE="$(cast wallet sign --no-hash "$ATTESTATION_DIGEST" --private-key "$KEY")"
+  send_and_confirm "register invoice with EIP-712 issuer attestation" "$SETTLEMENT" \
+    "registerInvoice(bytes32,address,address,address,uint128,uint64,bytes32,uint256,uint64,bytes)" \
     "$INVOICE_ID" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" "$TOKEN" \
-    "$FACE_VALUE" "$DUE_AT" "$TERMS_HASH"
+    "$FACE_VALUE" "$DUE_AT" "$TERMS_HASH" "$ISSUER_NONCE" "$ATTESTATION_DEADLINE" "$ISSUER_SIGNATURE"
   INVOICE_STATE="$(read_invoice_state)"
 fi
 if [[ "$INVOICE_STATE" != EXISTS:* ]]; then
