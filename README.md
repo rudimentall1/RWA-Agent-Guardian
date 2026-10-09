@@ -34,7 +34,7 @@ For a deployment, copy **.env.example** to **.env** and set the deployer key, pa
     set +a
     bash scripts/deploy-sepolia.sh
 
-The script deploys a synthetic payment token, the settlement contract, and a narrow agent executor; it registers a demo invoice and mints test tokens to the payer. Copy the resulting public addresses into **ui/config.js** based on **ui/config.example.js**. The connected payer must accept the invoice, approve and fund escrow, and authorize the executor before running the valid and over-limit scenarios.
+The script deploys a synthetic payment token, the settlement contract, and a narrow agent executor in sequence with explicit gas limits. It stops when any transaction fails, registers a demo invoice, mints test tokens to the payer, and writes public addresses to deployment config files. Copy the resulting public addresses into **ui/config.js** based on **ui/config.example.js**. The connected payer must accept the invoice, approve and fund escrow, and authorize the executor before running the valid and over-limit scenarios.
 
 ## Build and test
 
