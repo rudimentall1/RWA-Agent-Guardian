@@ -232,11 +232,36 @@ FACE_VALUE=10000000000
 # Inspect invoice storage first so a retry after a partial run does not collide
 # with InvoiceExists or write a mismatched dueAt into the public config.
 read_invoice_state() {
-  local raw
+  local raw due_at expected_terms_hash
   raw="$(cast call "$SETTLEMENT" "invoices(bytes32)" "$INVOICE_ID" --rpc-url "$SEPOLIA_RPC_URL")"
-  python3 - "$raw" "$DEPLOYER_ADDRESS" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" "$TOKEN" "$FACE_VALUE" "$TERMS_HASH" <<'INVOICEPY'
+  due_at="$(python3 - "$raw" <<'DUEPY'
 import sys
-raw, issuer, payer, beneficiary, token, face_value, terms_hash = sys.argv[1:]
+data = sys.argv[1].strip()
+if data.startswith("0x"): data = data[2:]
+if len(data) != 10 * 64:
+    print(f"Unexpected invoice getter response length: {len(data)}", file=sys.stderr)
+    raise SystemExit(1)
+words = [data[i:i+64] for i in range(0, len(data), 64)]
+if int(words[9], 16) == 0:
+    print("MISSING")
+else:
+    print(int(words[7], 16))
+DUEPY
+)"
+  if [[ "$due_at" == "MISSING" ]]; then
+    echo "MISSING"
+    return 0
+  fi
+  if ! expected_terms_hash="$(cast call "$SETTLEMENT" \
+      "computeTermsHash(address,bytes32,address,address,address,uint128,uint64,bytes32)(bytes32)" \
+      "$DEPLOYER_ADDRESS" "$INVOICE_ID" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" "$TOKEN" \
+      "$FACE_VALUE" "$due_at" "$TERMS_HASH" --rpc-url "$SEPOLIA_RPC_URL")"; then
+    echo "FAILED: could not compute canonical terms hash on the target contract." >&2
+    return 1
+  fi
+  python3 - "$raw" "$DEPLOYER_ADDRESS" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" "$TOKEN" "$FACE_VALUE" "$expected_terms_hash" <<'INVOICEPY'
+import sys
+raw, issuer, payer, beneficiary, token, face_value, expected_terms_hash = sys.argv[1:]
 data = raw.strip()
 if data.startswith("0x"): data = data[2:]
 if len(data) != 10 * 64:
@@ -254,7 +279,7 @@ expected = {
     "beneficiary": (addr(w[2]), beneficiary.lower()),
     "token": (addr(w[3]), token.lower()),
     "faceValue": (int(w[4],16), int(face_value)),
-    "termsHash": ("0x" + w[8], terms_hash.lower()),
+    "canonical termsHash": ("0x" + w[8], expected_terms_hash.strip().lower()),
 }
 mismatches = [f"{k}: onchain={got}, expected={want}" for k, (got,want) in expected.items() if got != want]
 if mismatches:
