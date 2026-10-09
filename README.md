@@ -50,6 +50,12 @@ Requires Foundry and Solidity 0.8.24.
 
     forge test -vv
 
+To reproduce the full 2,000 dUSD ALLOW, 3,000 dUSD BLOCK, 5,000 dUSD aggregate-cap, and post-cap BLOCK sequence against fresh local test state, run:
+
+    forge test --match-test testDemoScenarioAllowsTwoThousandBlocksThreeThousandAndStopsAtFiveThousand -vv
+
+See [docs/DEMO_SCENARIO.md](docs/DEMO_SCENARIO.md) for the exact sequence and assertions. This local scenario does not reset or alter the public Sepolia deployment.
+
 ## Build provenance
 
 A separate exploratory prototype informed the choice of problem. This repository implements the invoice acceptance, escrow settlement, and dispute lifecycle as a separate codebase, with its own contracts and Foundry tests. The demo uses synthetic assets and does not represent a real receivable or legal claim.
