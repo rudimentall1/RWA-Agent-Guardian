@@ -290,7 +290,7 @@ mismatches = [f"{k}: onchain={got}, expected={want}" for k, (got,want) in expect
 if mismatches:
     print("Existing invoice differs from expected deployment configuration: " + "; ".join(mismatches), file=sys.stderr)
     raise SystemExit(2)
-print(f"EXISTS:{int(w[7],16)}")
+print(f"EXISTS:{int(w[7],16)}:0x{w[8]}")
 INVOICEPY
 }
 
@@ -309,7 +309,12 @@ if [[ "$INVOICE_STATE" != EXISTS:* ]]; then
   exit 1
 fi
 DUE_AT="$(printf '%s' "$INVOICE_STATE" | cut -d: -f2)"
-echo "Invoice registration verified onchain (dueAt=$DUE_AT)." >&2
+ONCHAIN_TERMS_HASH="$(printf '%s' "$INVOICE_STATE" | cut -d: -f3)"
+if [[ ! "$ONCHAIN_TERMS_HASH" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
+  echo "FAILED: could not read the confirmed onchain termsHash. Refusing to write deployment config." >&2
+  exit 1
+fi
+echo "Invoice registration verified onchain (dueAt=$DUE_AT, termsHash=$ONCHAIN_TERMS_HASH)." >&2
 
 BALANCE="$(cast call "$TOKEN" "balanceOf(address)(uint256)" "$PAYER_ADDRESS" --rpc-url "$SEPOLIA_RPC_URL")"
 if [[ ! "$BALANCE" =~ ^[0-9]+$ ]]; then
@@ -324,7 +329,7 @@ else
   echo "Payer already holds sufficient demo settlement tokens ($BALANCE); skipping duplicate mint." >&2
 fi
 
-python3 - "$TOKEN" "$SETTLEMENT" "$EXECUTOR" "$INVOICE_ID" "$TERMS_HASH" "$DUE_AT" "$DEPLOYER_ADDRESS" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" <<'PY'
+python3 - "$TOKEN" "$SETTLEMENT" "$EXECUTOR" "$INVOICE_ID" "$ONCHAIN_TERMS_HASH" "$DUE_AT" "$DEPLOYER_ADDRESS" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" <<'PY'
 import json, sys
 from pathlib import Path
 
