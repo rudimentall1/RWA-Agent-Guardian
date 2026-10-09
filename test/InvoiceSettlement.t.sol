@@ -522,6 +522,11 @@ contract InvoiceSettlementTest {
         require(inv.status == InvoiceSettlement.Status.ACCEPTED, "resolver did not resume invoice");
         require(settlement.disputeStartedAt(INVOICE_ID) == 0, "dispute timestamp was not cleared");
 
+        vm.prank(PAYER);
+        settlement.authorizeAgent(
+            INVOICE_ID, AGENT, 2_000, 5_000, uint64(block.timestamp + 1 days)
+        );
+
         vm.prank(AGENT);
         settlement.settle(INVOICE_ID, 1_000, 0, uint64(block.timestamp + 1 hours));
         inv = settlement.getInvoice(INVOICE_ID);
