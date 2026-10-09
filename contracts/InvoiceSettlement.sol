@@ -42,7 +42,9 @@ contract InvoiceSettlement {
 
     address public disputeResolver;
     address public immutable disputeResolverAdmin;
+    bytes32 public constant INVOICE_TERMS_DOMAIN = keccak256("RWA_AGENT_GUARDIAN_INVOICE_V1");
     mapping(bytes32 => Invoice) public invoices;
+    mapping(bytes32 => bytes32) public invoiceDocumentHashes;
     mapping(bytes32 => mapping(address => Mandate)) public mandates;
     mapping(bytes32 => uint64) public latestMandateExpiry;
     bool private entered;
@@ -115,6 +117,32 @@ contract InvoiceSettlement {
         entered = false;
     }
 
+    /// @notice Computes the canonical invoice commitment for a given on-chain record and document hash.
+    function computeTermsHash(
+        address issuer,
+        bytes32 invoiceId,
+        address payer,
+        address beneficiary,
+        address token,
+        uint128 faceValue,
+        uint64 dueAt,
+        bytes32 documentHash
+    ) public pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                INVOICE_TERMS_DOMAIN,
+                issuer,
+                invoiceId,
+                payer,
+                beneficiary,
+                token,
+                faceValue,
+                dueAt,
+                documentHash
+            )
+        );
+    }
+
     function registerInvoice(
         bytes32 invoiceId,
         address payer,
@@ -122,7 +150,7 @@ contract InvoiceSettlement {
         address token,
         uint128 faceValue,
         uint64 dueAt,
-        bytes32 termsHash
+        bytes32 documentHash
     ) external nonReentrant {
         if (invoiceId == bytes32(0) || invoices[invoiceId].status != Status.NONE) {
             revert InvoiceExists(invoiceId);
@@ -131,8 +159,12 @@ contract InvoiceSettlement {
             payer == address(0) || beneficiary == address(0) || token == address(0) || payer == msg.sender
                 || payer == beneficiary || faceValue == 0 || dueAt <= block.timestamp
         ) revert InvalidTerms();
-        if (termsHash == bytes32(0)) revert InvalidTerms();
+        if (documentHash == bytes32(0)) revert InvalidTerms();
 
+        bytes32 termsHash = computeTermsHash(
+            msg.sender, invoiceId, payer, beneficiary, token, faceValue, dueAt, documentHash
+        );
+        invoiceDocumentHashes[invoiceId] = documentHash;
         invoices[invoiceId] = Invoice({
             issuer: msg.sender,
             payer: payer,
