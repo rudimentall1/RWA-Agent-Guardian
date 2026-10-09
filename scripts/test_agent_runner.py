@@ -5,7 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
-from agent_runner import (\n    ask_ollama, build_intent_typed_data, decode_words, load_agent_private_key,\n    parse_ai_decision, validate_config_shape, validate_runtime_config,\n)
+from agent_runner import (
+    ask_ollama, build_intent_typed_data, decode_words, load_agent_private_key,
+    parse_ai_decision, validate_config_shape, validate_runtime_config,
+)
 
 
 class AgentRunnerDecodeTests(unittest.TestCase):
