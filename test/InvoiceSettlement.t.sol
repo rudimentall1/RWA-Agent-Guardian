@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "../contracts/InvoiceSettlement.sol";
 import "../contracts/DemoAgentExecutor.sol";
 import "./TestToken.sol";
+import "./TestFeeToken.sol";
 
 interface Vm {
     function prank(address sender) external;
