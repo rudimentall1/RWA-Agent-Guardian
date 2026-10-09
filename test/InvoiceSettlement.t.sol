@@ -247,6 +247,52 @@ contract InvoiceSettlementTest {
         settlement.fundInvoice(otherId, 500);
     }
 
+    function testCanonicalTermsHashBindsAllInvoiceFieldsAndDocumentHash() public {
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        bytes32 expected = settlement.computeTermsHash(
+            address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
+        );
+        require(inv.termsHash == expected, "stored terms hash is not canonical");
+        require(settlement.invoiceDocumentHashes(INVOICE_ID) == TERMS_HASH, "document hash not stored");
+
+        require(
+            expected != settlement.computeTermsHash(
+                address(this), INVOICE_ID, address(0xB0C), BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
+            ),
+            "payer change did not alter commitment"
+        );
+        require(
+            expected != settlement.computeTermsHash(
+                address(this), INVOICE_ID, PAYER, address(0xD00E), address(token), 10_000, dueAt, TERMS_HASH
+            ),
+            "beneficiary change did not alter commitment"
+        );
+        require(
+            expected != settlement.computeTermsHash(
+                address(this), INVOICE_ID, PAYER, BENEFICIARY, address(0x1234), 10_000, dueAt, TERMS_HASH
+            ),
+            "token change did not alter commitment"
+        );
+        require(
+            expected != settlement.computeTermsHash(
+                address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_001, dueAt, TERMS_HASH
+            ),
+            "face value change did not alter commitment"
+        );
+        require(
+            expected != settlement.computeTermsHash(
+                address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt + 1, TERMS_HASH
+            ),
+            "due date change did not alter commitment"
+        );
+        require(
+            expected != settlement.computeTermsHash(
+                address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, keccak256("other-document")
+            ),
+            "document hash change did not alter commitment"
+        );
+    }
+
     function testDuplicateInvoiceIdIsRejected() public {
         vm.expectRevert(abi.encodeWithSelector(InvoiceSettlement.InvoiceExists.selector, INVOICE_ID));
         settlement.registerInvoice(
