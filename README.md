@@ -4,6 +4,8 @@
 
 The prototype models a narrow, testable trade-finance flow: an issuer registers an invoice commitment, the payer accepts it, funds are deposited into escrow, and a payer-authorized agent can make capped partial payments to the named beneficiary.
 
+**[Watch the demo in your browser](https://rudimentall1.github.io/RWA-Agent-Guardian/video.html)**
+
 The key rule is about invoice state, not just wallet balance: an agent cannot settle an unaccepted or disputed invoice. Each mandate has a per-payment cap, an aggregate cap, an expiry, and a monotonic nonce. A failed token transfer reverts the state change. A dispute resolver can resume the invoice or cancel it and refund the unpaid escrow balance.
 
 ## Current scope
@@ -38,7 +40,7 @@ The script deploys a synthetic payment token, the settlement contract, and a nar
 
 ## Demo recording
 
-The walkthrough is available at [demo/RWA-Agent-Guardian-demo.mp4](https://github.com/rudimentall1/RWA-Agent-Guardian/blob/main/demo/RWA-Agent-Guardian-demo.mp4). It shows the Sepolia test deployment, including the per-payment rejection, partial settlements, and the aggregate limit.
+The walkthrough has a browser-based player at [Watch the demo](https://rudimentall1.github.io/RWA-Agent-Guardian/video.html). The MP4 is also kept in **demo/** in this repository. The player uses the same video file and supports playback and seeking without requiring a manual download.
 
 The public deployment has already reached its 5,000 dUSD aggregate spending limit. This is the expected final state, so a new settlement preflight on that invoice should return BLOCK. The current deployment is not a resettable sandbox.
 
