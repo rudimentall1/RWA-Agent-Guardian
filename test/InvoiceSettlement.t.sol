@@ -301,4 +301,57 @@ contract InvoiceSettlementTest {
         require(token.balanceOf(PAYER) == 10_000, "unused escrow not fully refunded");
     }
 
+
+    function testFeeOnTransferTokenCannotUnderfundEscrow() public {
+        TestFeeToken feeToken = new TestFeeToken();
+        bytes32 feeInvoice = keccak256("INV-FEE-FUNDING");
+        feeToken.mint(PAYER, 10_000);
+        vm.prank(PAYER);
+        feeToken.approve(address(settlement), 10_000);
+        settlement.registerInvoice(
+            feeInvoice, PAYER, BENEFICIARY, address(feeToken), 10_000, dueAt, TERMS_HASH
+        );
+        vm.prank(PAYER);
+        settlement.acceptInvoice(feeInvoice);
+        feeToken.setFeeBps(1_000);
+
+        vm.expectRevert(InvoiceSettlement.TransferFailed.selector);
+        vm.prank(PAYER);
+        settlement.fundInvoice(feeInvoice, 10_000);
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(feeInvoice);
+        require(inv.funded == 0, "failed funding changed invoice accounting");
+        require(feeToken.balanceOf(address(settlement)) == 0, "fee token left unexpected escrow balance");
+        require(feeToken.balanceOf(PAYER) == 10_000, "failed transfer did not roll back token state");
+    }
+
+    function testFeeOnTransferPayoutRollsBackSettlementAccounting() public {
+        TestFeeToken feeToken = new TestFeeToken();
+        bytes32 feeInvoice = keccak256("INV-FEE-PAYOUT");
+        feeToken.mint(PAYER, 10_000);
+        vm.prank(PAYER);
+        feeToken.approve(address(settlement), 10_000);
+        settlement.registerInvoice(
+            feeInvoice, PAYER, BENEFICIARY, address(feeToken), 10_000, dueAt, TERMS_HASH
+        );
+        vm.prank(PAYER);
+        settlement.acceptInvoice(feeInvoice);
+        vm.prank(PAYER);
+        settlement.fundInvoice(feeInvoice, 10_000);
+        vm.prank(PAYER);
+        settlement.authorizeAgent(feeInvoice, AGENT, 2_000, 5_000, mandateExpiry);
+        feeToken.setFeeBps(1_000);
+
+        vm.expectRevert(InvoiceSettlement.TransferFailed.selector);
+        vm.prank(AGENT);
+        settlement.settle(feeInvoice, 2_000, 0, uint64(block.timestamp + 1 hours));
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(feeInvoice);
+        InvoiceSettlement.Mandate memory mandate = settlement.getMandate(feeInvoice, AGENT);
+        require(inv.paid == 0, "failed payout changed paid accounting");
+        require(mandate.spent == 0 && mandate.nonce == 0, "failed payout changed mandate");
+        require(feeToken.balanceOf(address(settlement)) == 10_000, "failed payout changed escrow balance");
+        require(feeToken.balanceOf(BENEFICIARY) == 0, "beneficiary received partial fee payout");
+    }
+
 }
