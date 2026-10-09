@@ -29,8 +29,9 @@ class VerifyAgentIntentTests(unittest.TestCase):
                 "spent": 0, "expiresAt": 1800000300, "nonce": 4
             },
             "maxAllowedAmount": 2000,
-            "decisionDeadline": 1800000300,
+            "observedAt": 1799999999,
         }
+        self.intent_deadline = 1800000300
         self.decision = {
             "decision": "ALLOW",
             "amount": 1000,
@@ -55,7 +56,7 @@ class VerifyAgentIntentTests(unittest.TestCase):
             self.config["invoiceId"],
             self.decision["amount"],
             self.context["mandate"]["nonce"],
-            self.context["decisionDeadline"],
+            self.intent_deadline,
             self.context_hash,
             self.decision_hash,
         )
@@ -70,6 +71,7 @@ class VerifyAgentIntentTests(unittest.TestCase):
             "decision": self.decision,
             "decisionRecord": self.decision_record,
             "decisionHash": self.decision_hash,
+            "intentDeadline": self.intent_deadline,
             "typedData": self.typed_data,
             "signature": self.signature,
             "transactionHash": None,
@@ -112,13 +114,14 @@ class VerifyAgentIntentTests(unittest.TestCase):
             "decision": self.decision,
             "contextHash": self.context_hash,
             "decisionHash": self.decision_hash,
+            "intentDeadline": self.intent_deadline,
             "signature": self.signature,
         }
         args = [
             self.config["invoiceId"][2:],
             f"{self.decision['amount']:064x}",
             f"{self.context['mandate']['nonce']:064x}",
-            f"{self.context['decisionDeadline']:064x}",
+            f"{self.intent_deadline:064x}",
             self.context_hash[2:],
             self.decision_hash[2:],
             f"{7 * 32:064x}",
