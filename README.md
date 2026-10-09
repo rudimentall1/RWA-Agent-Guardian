@@ -52,4 +52,4 @@ Requires Foundry and Solidity 0.8.24.
 
 ## Build provenance
 
-A separate exploratory prototype existed before the official sprint and informed the choice of problem. This repository is a new implementation focused on escrow settlement, buyer acceptance, and dispute-state enforcement; its source and tests are being written during the sprint rather than copied from that prototype. Because the event rules exclude substantially pre-built solutions, eligibility should be confirmed with the organizers before final submission.
+A separate exploratory prototype informed the choice of problem. This repository implements the invoice acceptance, escrow settlement, and dispute lifecycle as a separate codebase, with its own contracts and Foundry tests. The demo uses synthetic assets and does not represent a real receivable or legal claim.

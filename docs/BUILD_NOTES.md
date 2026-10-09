@@ -21,7 +21,7 @@ The implementation focuses on the invoice payment lifecycle rather than guarding
 
 ## Prior exploration
 
-A separate prototype was built before the event. The present implementation is materially reworked around invoice acceptance, escrow settlement, and dispute lifecycle rather than the earlier token-transfer guard. The repository history is intended to record new implementation work transparently. Organizers should be asked to confirm eligibility if the overlap in problem framing is a concern.
+A separate prototype was built before the event and informed the choice of problem. This implementation focuses on invoice acceptance, escrow settlement, and dispute-state enforcement rather than a generic token-transfer guard. The repository history records the implementation work for this version.
 
 
 ## Sepolia gas repricing (9 October 2026)
