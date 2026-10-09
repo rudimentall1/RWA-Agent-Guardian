@@ -252,4 +252,53 @@ contract InvoiceSettlementTest {
             INVOICE_ID, PAYER, BENEFICIARY, address(token), 100, uint64(block.timestamp + 30 days), TERMS_HASH
         );
     }
+
+    function testPayerCanCancelAndRefundAfterMandateExpiryWithoutResolver() public {
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 2_000, 0, uint64(block.timestamp + 1 hours));
+
+        vm.warp(uint256(mandateExpiry) + 1);
+        vm.prank(PAYER);
+        settlement.cancelExpiredInvoice(INVOICE_ID);
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        require(inv.status == InvoiceSettlement.Status.CANCELLED, "invoice not cancelled");
+        require(inv.paid == 2_000, "paid amount changed");
+        require(token.balanceOf(PAYER) == 8_000, "unused escrow not refunded");
+        require(token.balanceOf(BENEFICIARY) == 2_000, "beneficiary payment changed");
+        require(token.balanceOf(address(settlement)) == 0, "escrow should be empty");
+    }
+
+    function testCannotCancelBeforeLatestMandateExpiry() public {
+        vm.expectRevert(InvoiceSettlement.InvalidDeadline.selector);
+        vm.prank(PAYER);
+        settlement.cancelExpiredInvoice(INVOICE_ID);
+    }
+
+    function testOnlyPayerCanCancelExpiredInvoice() public {
+        vm.warp(uint256(mandateExpiry) + 1);
+        vm.expectRevert(InvoiceSettlement.Unauthorized.selector);
+        vm.prank(STRANGER);
+        settlement.cancelExpiredInvoice(INVOICE_ID);
+    }
+
+    function testReauthorizationExtendsCancellationWait() public {
+        uint64 extendedExpiry = uint64(block.timestamp + 60 days);
+        vm.prank(PAYER);
+        settlement.authorizeAgent(INVOICE_ID, AGENT, 2_000, 5_000, extendedExpiry);
+
+        vm.warp(uint256(mandateExpiry) + 1);
+        vm.expectRevert(InvoiceSettlement.InvalidDeadline.selector);
+        vm.prank(PAYER);
+        settlement.cancelExpiredInvoice(INVOICE_ID);
+
+        vm.warp(uint256(extendedExpiry) + 1);
+        vm.prank(PAYER);
+        settlement.cancelExpiredInvoice(INVOICE_ID);
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        require(inv.status == InvoiceSettlement.Status.CANCELLED, "invoice not cancelled after expiry");
+        require(token.balanceOf(PAYER) == 10_000, "unused escrow not fully refunded");
+    }
+
 }
