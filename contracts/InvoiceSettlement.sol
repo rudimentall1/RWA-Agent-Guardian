@@ -15,7 +15,8 @@ contract InvoiceSettlement {
         ACCEPTED,
         DISPUTED,
         SETTLED,
-        CANCELLED
+        CANCELLED,
+        CLAIMED
     }
 
     struct Invoice {
@@ -44,10 +45,13 @@ contract InvoiceSettlement {
     address public immutable disputeResolverAdmin;
     bytes32 public constant INVOICE_TERMS_DOMAIN = keccak256("RWA_AGENT_GUARDIAN_INVOICE_V1");
     uint64 public constant MAX_MANDATE_EXTENSION = 30 days;
+    uint64 public constant DISPUTE_TIMEOUT = 7 days;
+    mapping(address => bool) public approvedIssuers;
     mapping(bytes32 => Invoice) public invoices;
     mapping(bytes32 => bytes32) public invoiceDocumentHashes;
     mapping(bytes32 => mapping(address => Mandate)) public mandates;
     mapping(bytes32 => uint64) public latestMandateExpiry;
+    mapping(bytes32 => uint64) public disputeStartedAt;
     bool private entered;
 
     error Unauthorized();
@@ -65,6 +69,7 @@ contract InvoiceSettlement {
     error Reentrancy();
     error InvalidResolver();
 
+    event IssuerApprovalUpdated(address indexed issuer, bool approved);
     event InvoiceRegistered(
         bytes32 indexed invoiceId,
         address indexed issuer,
@@ -82,6 +87,8 @@ contract InvoiceSettlement {
     );
     event AgentRevoked(bytes32 indexed invoiceId, address indexed agent);
     event InvoiceDisputed(bytes32 indexed invoiceId, address indexed payer);
+    event DisputeTimedOut(bytes32 indexed invoiceId);
+    event BeneficiaryClaimed(bytes32 indexed invoiceId, address indexed beneficiary, uint256 amount);
     event DisputeResolved(bytes32 indexed invoiceId, bool resumed);
     event DisputeResolverUpdated(address indexed previousResolver, address indexed newResolver);
     event InvoiceRefunded(bytes32 indexed invoiceId, address indexed payer, uint256 amount);
@@ -118,6 +125,14 @@ contract InvoiceSettlement {
         entered = false;
     }
 
+    /// @notice Admin-managed issuer allowlist for this prototype. This is not proof of a legal receivable.
+    function setIssuerApproval(address issuer, bool approved) external nonReentrant {
+        if (msg.sender != disputeResolverAdmin) revert Unauthorized();
+        if (issuer == address(0)) revert InvalidTerms();
+        approvedIssuers[issuer] = approved;
+        emit IssuerApprovalUpdated(issuer, approved);
+    }
+
     /// @notice Computes the canonical invoice commitment for a given on-chain record and document hash.
     function computeTermsHash(
         address issuer,
@@ -131,15 +146,7 @@ contract InvoiceSettlement {
     ) public pure returns (bytes32) {
         return keccak256(
             abi.encode(
-                INVOICE_TERMS_DOMAIN,
-                issuer,
-                invoiceId,
-                payer,
-                beneficiary,
-                token,
-                faceValue,
-                dueAt,
-                documentHash
+                INVOICE_TERMS_DOMAIN, issuer, invoiceId, payer, beneficiary, token, faceValue, dueAt, documentHash
             )
         );
     }
@@ -156,15 +163,15 @@ contract InvoiceSettlement {
         if (invoiceId == bytes32(0) || invoices[invoiceId].status != Status.NONE) {
             revert InvoiceExists(invoiceId);
         }
+        if (!approvedIssuers[msg.sender]) revert Unauthorized();
         if (
             payer == address(0) || beneficiary == address(0) || token == address(0) || payer == msg.sender
                 || payer == beneficiary || faceValue == 0 || dueAt <= block.timestamp
         ) revert InvalidTerms();
         if (documentHash == bytes32(0)) revert InvalidTerms();
 
-        bytes32 termsHash = computeTermsHash(
-            msg.sender, invoiceId, payer, beneficiary, token, faceValue, dueAt, documentHash
-        );
+        bytes32 termsHash =
+            computeTermsHash(msg.sender, invoiceId, payer, beneficiary, token, faceValue, dueAt, documentHash);
         invoiceDocumentHashes[invoiceId] = documentHash;
         invoices[invoiceId] = Invoice({
             issuer: msg.sender,
@@ -248,6 +255,7 @@ contract InvoiceSettlement {
         if (inv.status != Status.ACCEPTED) revert WrongStatus();
 
         inv.status = Status.DISPUTED;
+        disputeStartedAt[invoiceId] = uint64(block.timestamp);
         emit InvoiceDisputed(invoiceId, msg.sender);
     }
 
@@ -266,6 +274,7 @@ contract InvoiceSettlement {
         } else if (block.timestamp <= latestExpiry) {
             revert InvalidDeadline();
         }
+        if (block.timestamp > uint256(inv.dueAt) + MAX_MANDATE_EXTENSION) revert InvalidDeadline();
 
         inv.status = Status.CANCELLED;
         uint256 refund = uint256(inv.funded) - inv.paid;
@@ -278,6 +287,9 @@ contract InvoiceSettlement {
         if (msg.sender != disputeResolver) revert Unauthorized();
         Invoice storage inv = _invoice(invoiceId);
         if (inv.status != Status.DISPUTED) revert WrongStatus();
+        uint64 startedAt = disputeStartedAt[invoiceId];
+        if (startedAt == 0 || block.timestamp > uint256(startedAt) + DISPUTE_TIMEOUT) revert InvalidDeadline();
+        delete disputeStartedAt[invoiceId];
 
         if (resume) {
             inv.status = Status.ACCEPTED;
@@ -288,6 +300,34 @@ contract InvoiceSettlement {
             if (refund > 0) emit InvoiceRefunded(invoiceId, inv.payer, refund);
         }
         emit DisputeResolved(invoiceId, resume);
+    }
+
+    /// @notice Reopens an unresolved dispute after a fixed timeout so funds cannot remain frozen forever.
+    /// @dev Timeout resumes the invoice; it does not decide the underlying commercial dispute.
+    function expireDispute(bytes32 invoiceId) external nonReentrant {
+        Invoice storage inv = _invoice(invoiceId);
+        if (inv.status != Status.DISPUTED) revert WrongStatus();
+        uint64 startedAt = disputeStartedAt[invoiceId];
+        if (startedAt == 0 || block.timestamp <= uint256(startedAt) + DISPUTE_TIMEOUT) revert InvalidDeadline();
+        delete disputeStartedAt[invoiceId];
+        inv.status = Status.ACCEPTED;
+        emit DisputeTimedOut(invoiceId);
+    }
+
+    /// @notice Allows the named beneficiary to claim remaining funded escrow after maturity and the mandate grace period.
+    function claimMaturedInvoice(bytes32 invoiceId) external nonReentrant {
+        Invoice storage inv = _invoice(invoiceId);
+        if (msg.sender != inv.beneficiary) revert Unauthorized();
+        if (inv.status != Status.ACCEPTED) revert WrongStatus();
+        if (block.timestamp <= uint256(inv.dueAt) + MAX_MANDATE_EXTENSION) revert InvalidDeadline();
+        uint64 latestExpiry = latestMandateExpiry[invoiceId];
+        if (latestExpiry != 0 && block.timestamp <= latestExpiry) revert InvalidDeadline();
+        uint256 amount = uint256(inv.funded) - inv.paid;
+        if (amount == 0) revert InvalidAmount();
+        inv.paid = inv.funded;
+        inv.status = Status.CLAIMED;
+        _transferExact(inv.token, inv.beneficiary, amount);
+        emit BeneficiaryClaimed(invoiceId, inv.beneficiary, amount);
     }
 
     function settle(bytes32 invoiceId, uint128 amount, uint64 nonce, uint64 deadline) external nonReentrant {
