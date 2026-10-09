@@ -139,18 +139,49 @@ send_and_confirm() {
   local target="$2"
   local signature="$3"
   shift 3
-  local output tx_hash receipt status nonce
+  local output tx_hash receipt status nonce calldata estimate_hex gas_limit
+
+  # Estimate this exact call on the live chain; a fixed 500k cap became too small
+  # after Sepolia's October protocol upgrade.
+  if ! calldata="$(cast calldata "$signature" "$@")"; then
+    echo "FAILED: could not encode calldata for $label. No transaction sent." >&2
+    return 1
+  fi
+  if ! estimate_hex="$(cast rpc --rpc-url "$SEPOLIA_RPC_URL" eth_estimateGas \
+      "{\"from\":\"$DEPLOYER_ADDRESS\",\"to\":\"$target\",\"data\":\"$calldata\"}")"; then
+    echo "FAILED: could not estimate gas for $label. No transaction sent." >&2
+    return 1
+  fi
+  if ! gas_limit="$(python3 - "$estimate_hex" <<'GASPY'
+import sys
+try:
+    estimate = int(sys.argv[1].strip().strip('"'), 16)
+except (ValueError, IndexError):
+    print("Invalid eth_estimateGas response", file=sys.stderr)
+    raise SystemExit(1)
+limit = ((estimate * 135 + 99) // 100)
+limit = ((limit + 9999) // 10000) * 10000
+max_tx_gas = 16_700_000
+if estimate <= 0 or limit > max_tx_gas:
+    print(f"Estimated gas {estimate:,}; safe limit {limit:,} exceeds configured cap {max_tx_gas:,}.", file=sys.stderr)
+    raise SystemExit(1)
+print(limit)
+GASPY
+  )"; then
+    echo "FAILED: no safe gas limit established for $label. No transaction sent." >&2
+    return 1
+  fi
   if ! nonce="$(cast nonce "$DEPLOYER_ADDRESS" --block pending --rpc-url "$SEPOLIA_RPC_URL")" ||
       [[ ! "$nonce" =~ ^[0-9]+$ ]]; then
     echo "FAILED: could not read pending nonce for $label. No transaction sent." >&2
     return 1
   fi
-  echo "Sending $label (nonce: $nonce)..." >&2
+  echo "Sending $label (RPC estimate: $((gas_limit * 100 / 135)) gas; limit with 35% headroom: $gas_limit; nonce: $nonce)..." >&2
   if ! output="$(cast send "$target" "$signature" "$@" \
       --rpc-url "$SEPOLIA_RPC_URL" \
       --private-key "$KEY" \
       --nonce "$nonce" \
-      --gas-limit 500000 \
+      --gas-limit "$gas_limit" \
       --gas-price "$TX_MAX_FEE_PER_GAS" \
       --priority-gas-price "$TX_PRIORITY_FEE_PER_GAS" \
       --timeout 60 2>&1)"; then
@@ -197,15 +228,71 @@ fi
 INVOICE_ID="$(cast keccak 'INV-1001')"
 TERMS_HASH="$(cast keccak 'INV-1001|Synthetic invoice|10000 dUSD|NET30|v1')"
 FACE_VALUE=10000000000
-CHAIN_TIMESTAMP="$(cast block latest --rpc-url "$SEPOLIA_RPC_URL" --json | python3 -c 'import json,sys; print(int(json.load(sys.stdin)["timestamp"], 16))')"
-DUE_AT="$((CHAIN_TIMESTAMP + 2592000))"
 
-send_and_confirm "register invoice" "$SETTLEMENT" \
-  "registerInvoice(bytes32,address,address,address,uint128,uint64,bytes32)" \
-  "$INVOICE_ID" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" "$TOKEN" \
-  "$FACE_VALUE" "$DUE_AT" "$TERMS_HASH"
-send_and_confirm "mint demo settlement balance" "$TOKEN" \
-  "mint(address,uint256)" "$PAYER_ADDRESS" "$FACE_VALUE"
+# Inspect invoice storage first so a retry after a partial run does not collide
+# with InvoiceExists or write a mismatched dueAt into the public config.
+read_invoice_state() {
+  local raw
+  raw="$(cast call "$SETTLEMENT" "invoices(bytes32)" "$INVOICE_ID" --rpc-url "$SEPOLIA_RPC_URL")"
+  python3 - "$raw" "$DEPLOYER_ADDRESS" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" "$TOKEN" "$FACE_VALUE" "$TERMS_HASH" <<'INVOICEPY'
+import sys
+raw, issuer, payer, beneficiary, token, face_value, terms_hash = sys.argv[1:]
+data = raw.strip()
+if data.startswith("0x"): data = data[2:]
+if len(data) != 10 * 64:
+    print(f"Unexpected invoice getter response length: {len(data)}", file=sys.stderr)
+    raise SystemExit(1)
+w = [data[i:i+64].lower() for i in range(0, len(data), 64)]
+addr = lambda word: "0x" + word[-40:]
+status = int(w[9], 16)
+if status == 0:
+    print("MISSING")
+    raise SystemExit(0)
+expected = {
+    "issuer": (addr(w[0]), issuer.lower()),
+    "payer": (addr(w[1]), payer.lower()),
+    "beneficiary": (addr(w[2]), beneficiary.lower()),
+    "token": (addr(w[3]), token.lower()),
+    "faceValue": (int(w[4],16), int(face_value)),
+    "termsHash": ("0x" + w[8], terms_hash.lower()),
+}
+mismatches = [f"{k}: onchain={got}, expected={want}" for k, (got,want) in expected.items() if got != want]
+if mismatches:
+    print("Existing invoice differs from expected deployment configuration: " + "; ".join(mismatches), file=sys.stderr)
+    raise SystemExit(2)
+print(f"EXISTS:{int(w[7],16)}")
+INVOICEPY
+}
+
+INVOICE_STATE="$(read_invoice_state)"
+if [[ "$INVOICE_STATE" == "MISSING" ]]; then
+  CHAIN_TIMESTAMP="$(cast block latest --rpc-url "$SEPOLIA_RPC_URL" --json | python3 -c 'import json,sys; print(int(json.load(sys.stdin)["timestamp"], 16))')"
+  DUE_AT="$((CHAIN_TIMESTAMP + 2592000))"
+  send_and_confirm "register invoice" "$SETTLEMENT" \
+    "registerInvoice(bytes32,address,address,address,uint128,uint64,bytes32)" \
+    "$INVOICE_ID" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" "$TOKEN" \
+    "$FACE_VALUE" "$DUE_AT" "$TERMS_HASH"
+  INVOICE_STATE="$(read_invoice_state)"
+fi
+if [[ "$INVOICE_STATE" != EXISTS:* ]]; then
+  echo "FAILED: invoice registration state not confirmed. State=$INVOICE_STATE" >&2
+  exit 1
+fi
+DUE_AT="$(printf '%s' "$INVOICE_STATE" | cut -d: -f2)"
+echo "Invoice registration verified onchain (dueAt=$DUE_AT)." >&2
+
+BALANCE="$(cast call "$TOKEN" "balanceOf(address)(uint256)" "$PAYER_ADDRESS" --rpc-url "$SEPOLIA_RPC_URL")"
+if [[ ! "$BALANCE" =~ ^[0-9]+$ ]]; then
+  echo "FAILED: could not parse payer token balance; refusing to mint." >&2
+  exit 1
+fi
+if (( BALANCE < FACE_VALUE )); then
+  MINT_AMOUNT="$((FACE_VALUE - BALANCE))"
+  send_and_confirm "mint demo settlement balance" "$TOKEN" \
+    "mint(address,uint256)" "$PAYER_ADDRESS" "$MINT_AMOUNT"
+else
+  echo "Payer already holds sufficient demo settlement tokens ($BALANCE); skipping duplicate mint." >&2
+fi
 
 python3 - "$TOKEN" "$SETTLEMENT" "$EXECUTOR" "$INVOICE_ID" "$TERMS_HASH" "$DUE_AT" "$DEPLOYER_ADDRESS" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" <<'PY'
 import json, sys
