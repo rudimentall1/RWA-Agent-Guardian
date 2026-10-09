@@ -472,4 +472,24 @@ contract InvoiceSettlementTest {
         require(token.balanceOf(address(settlement)) == 5_000, "remaining escrow mismatch");
     }
 
+
+    function testCanonicalTermsHashBindsIssuerAndInvoiceId() public {
+        bytes32 expected = settlement.computeTermsHash(
+            address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
+        );
+
+        require(
+            expected != settlement.computeTermsHash(
+                address(0xCAFE), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
+            ),
+            "issuer change did not alter commitment"
+        );
+        require(
+            expected != settlement.computeTermsHash(
+                address(this), keccak256("INV-2026-002"), PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
+            ),
+            "invoice ID change did not alter commitment"
+        );
+    }
+
 }
