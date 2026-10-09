@@ -526,7 +526,7 @@
       const simulationExecutor = new ethers.Contract(
         cfg.agentExecutor,
         executorAbi,
-        new ethers.VoidSigner(invoice.payer, readProvider)
+        new ethers.VoidSigner(cfg.agentOwner, readProvider)
       );
       stage = "simulation";
       await simulationExecutor.execute.staticCall(activeInvoiceId, rawAmount, mandate.nonce, deadline);
