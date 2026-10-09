@@ -677,6 +677,37 @@ contract InvoiceSettlementTest {
         require(token.balanceOf(address(settlement)) == 5_000, "remaining escrow mismatch");
     }
 
+
+    function testTokenCallbackCannotReenterSettlement() public {
+        vm.prank(PAYER);
+        settlement.authorizeAgent(INVOICE_ID, address(token), 1_000, 2_000, mandateExpiry);
+
+        token.configureCallback(
+            address(settlement),
+            abi.encodeWithSelector(
+                settlement.settle.selector,
+                INVOICE_ID,
+                uint128(1_000),
+                uint64(1),
+                uint64(block.timestamp + 1 hours)
+            )
+        );
+
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 1_000, 0, uint64(block.timestamp + 1 hours));
+
+        require(token.callbackAttempted(), "token callback was not attempted");
+        require(token.callbackBlocked(), "reentrant settlement was not blocked");
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        InvoiceSettlement.Mandate memory originalMandate = settlement.getMandate(INVOICE_ID, AGENT);
+        InvoiceSettlement.Mandate memory tokenMandate = settlement.getMandate(INVOICE_ID, address(token));
+        require(inv.paid == 1_000, "callback changed paid amount");
+        require(originalMandate.spent == 1_000 && originalMandate.nonce == 1, "outer mandate state mismatch");
+        require(tokenMandate.spent == 0 && tokenMandate.nonce == 0, "reentrant call changed token mandate");
+        require(token.balanceOf(BENEFICIARY) == 1_000, "callback caused an extra transfer");
+    }
+
     function testCanonicalTermsHashBindsIssuerAndInvoiceId() public {
         bytes32 expected = settlement.computeTermsHash(
             address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
