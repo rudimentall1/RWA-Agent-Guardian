@@ -209,6 +209,13 @@ except Exception: print(0)')"
 
 # Set EXISTING_*_ADDRESS to reuse a verified deployment after a partial run.
 # This prevents retrying a whole deployment from creating duplicate token/escrow contracts.
+# Reusing a settlement requires its associated token address so invoice state can be
+# checked before the script broadcasts any new deployment transaction.
+if [[ -n "${EXISTING_SETTLEMENT_ADDRESS:-}" && -z "${EXISTING_TOKEN_ADDRESS:-}" ]]; then
+  echo "FAILED: set EXISTING_TOKEN_ADDRESS when reusing EXISTING_SETTLEMENT_ADDRESS. No transaction sent." >&2
+  exit 1
+fi
+
 if [[ -n "${EXISTING_TOKEN_ADDRESS:-}" ]]; then
   TOKEN="$(verify_existing_contract "DemoSettlementToken" "$EXISTING_TOKEN_ADDRESS")"
 else
@@ -219,12 +226,6 @@ if [[ -n "${EXISTING_SETTLEMENT_ADDRESS:-}" ]]; then
 else
   SETTLEMENT="$(deploy_contract "InvoiceSettlement" "contracts/InvoiceSettlement.sol:InvoiceSettlement" 'constructor(address)' "$DEPLOYER_ADDRESS")"
 fi
-if [[ -n "${EXISTING_EXECUTOR_ADDRESS:-}" ]]; then
-  EXECUTOR="$(verify_existing_contract "DemoAgentExecutor" "$EXISTING_EXECUTOR_ADDRESS")"
-else
-  EXECUTOR="$(deploy_contract "DemoAgentExecutor" "contracts/DemoAgentExecutor.sol:DemoAgentExecutor" 'constructor(address,address)' "$SETTLEMENT" "$PAYER_ADDRESS")"
-fi
-
 INVOICE_ID="$(cast keccak 'INV-1001')"
 TERMS_HASH="$(cast keccak 'INV-1001|Synthetic invoice|10000 dUSD|NET30|v1')"
 FACE_VALUE=10000000000
@@ -308,6 +309,13 @@ if [[ "$INVOICE_STATE" != EXISTS:* ]]; then
   echo "FAILED: invoice registration state not confirmed. State=$INVOICE_STATE" >&2
   exit 1
 fi
+
+if [[ -n "${EXISTING_EXECUTOR_ADDRESS:-}" ]]; then
+  EXECUTOR="$(verify_existing_contract "DemoAgentExecutor" "$EXISTING_EXECUTOR_ADDRESS")"
+else
+  EXECUTOR="$(deploy_contract "DemoAgentExecutor" "contracts/DemoAgentExecutor.sol:DemoAgentExecutor" 'constructor(address,address)' "$SETTLEMENT" "$PAYER_ADDRESS")"
+fi
+
 DUE_AT="$(printf '%s' "$INVOICE_STATE" | cut -d: -f2)"
 ONCHAIN_TERMS_HASH="$(printf '%s' "$INVOICE_STATE" | cut -d: -f3)"
 if [[ ! "$ONCHAIN_TERMS_HASH" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
