@@ -4,7 +4,7 @@
 
 **RWA Agent Guardian: invoice escrow with onchain mandate enforcement**
 
-This is a testnet prototype for invoice settlement. An issuer registers a synthetic invoice, a payer accepts and funds it, and a narrow executor can make capped partial payments. The current source includes a deterministic off-chain scheduler that submits payments through the executor using a separate agent-owner key. It is not an LLM or an autonomous reasoning agent.
+This is a testnet prototype for invoice settlement. An issuer registers a synthetic invoice, a payer accepts and funds it, and a narrow executor can make capped partial payments. The current source includes an optional local Ollama decision component plus a deterministic compatibility mode. In AI mode, model proposals pass a strict policy gate, the agent signs an EIP-712 intent over the on-chain context and decision hashes, the executor verifies the signature, and the settlement contract remains the final spending control.
 
 ## Problem
 
@@ -19,7 +19,7 @@ A payment agent should not be able to spend an arbitrary amount just because it 
 - Dispute freeze, resolver-controlled resolution, and a seven-day timeout that escalates an unresolved invoice while keeping settlement frozen until the resolver acts.
 - A payer refund path within the maturity grace window and a beneficiary claim for remaining funded escrow after the due date plus 30 days and expiry of the latest mandate.
 - Exact token balance-delta checks and a canonical invoice commitment binding issuer, invoice ID, payer, beneficiary, token, face value, due date, and document hash.
-- A deterministic off-chain runner in `scripts/agent_runner.py` that executes only within on-chain mandate authority.
+- A local Ollama-backed ALLOW/WAIT/BLOCK proposal with strict JSON and amount-cap validation; signed context and decision hashes; on-chain EIP-712 signature verification in the updated executor; and a JSON evidence record saved locally under `agent-evidence/`.
 - Foundry regression tests, three invariant properties, coverage reporting, and Slither analysis in CI.
 - A `New invoice` UI action that lets an issuer create a signed invoice from its connected wallet on deployments with the current attestation interface.
 
@@ -27,7 +27,7 @@ Ethereum is part of the enforcement boundary, not merely a record of the outcome
 
 ## Honest scope and limitations
 
-The agent runner is a deterministic scheduler, not an LLM. The payer must still accept and fund the invoice and authorize the executor contract before scheduled payments can run. The agent-owner key must be separate from the payer key.
+The Ollama decision mode requires a local Ollama service and the updated `DemoAgentExecutor` bytecode. The public executor currently configured for the UI has not been upgraded, so signed-intent mode stops during preflight rather than sending a transaction. Deploy an updated executor and have the payer authorize its address before using AI mode. The deterministic compatibility mode remains available for the legacy demo. The payer must still accept and fund the invoice; the agent-owner key must be separate from the payer key.
 
 Invoice registration is permissionless, but the EIP-712 signature proves only that the named issuer signed the specified terms. It is not legal due diligence or proof that the invoice represents an enforceable receivable. The invoice and dUSD token are synthetic test fixtures; they do not represent a real receivable, legal ownership claim, or regulated asset. The resolver and its administrator remain trusted roles. This prototype has not had an independent security audit and is not ready for production funds.
 
