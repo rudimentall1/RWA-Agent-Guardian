@@ -134,6 +134,44 @@ verify_existing_contract() {
   printf '%s\n' "$address"
 }
 
+verify_contract_owner() {
+  local label="$1"
+  local address="$2"
+  local expected_owner="$3"
+  local actual_owner
+  if ! actual_owner="$(cast call "$address" "owner()(address)" --rpc-url "$SEPOLIA_RPC_URL")"; then
+    echo "FAILED: could not read owner() for $label at $address." >&2
+    return 1
+  fi
+  if [[ "${actual_owner,,}" != "${expected_owner,,}" ]]; then
+    echo "FAILED: $label owner mismatch: onchain=$actual_owner expected=$expected_owner." >&2
+    return 1
+  fi
+}
+
+verify_executor_bindings() {
+  local address="$1"
+  local expected_settlement="$2"
+  local expected_owner="$3"
+  local actual_settlement actual_owner
+  if ! actual_settlement="$(cast call "$address" "settlement()(address)" --rpc-url "$SEPOLIA_RPC_URL")"; then
+    echo "FAILED: could not read settlement() for existing executor $address." >&2
+    return 1
+  fi
+  if ! actual_owner="$(cast call "$address" "owner()(address)" --rpc-url "$SEPOLIA_RPC_URL")"; then
+    echo "FAILED: could not read owner() for existing executor $address." >&2
+    return 1
+  fi
+  if [[ "${actual_settlement,,}" != "${expected_settlement,,}" ]]; then
+    echo "FAILED: existing executor settlement mismatch: onchain=$actual_settlement expected=$expected_settlement." >&2
+    return 1
+  fi
+  if [[ "${actual_owner,,}" != "${expected_owner,,}" ]]; then
+    echo "FAILED: existing executor owner mismatch: onchain=$actual_owner expected=$expected_owner." >&2
+    return 1
+  fi
+}
+
 send_and_confirm() {
   local label="$1"
   local target="$2"
@@ -215,16 +253,25 @@ if [[ -n "${EXISTING_SETTLEMENT_ADDRESS:-}" && -z "${EXISTING_TOKEN_ADDRESS:-}" 
   echo "FAILED: set EXISTING_TOKEN_ADDRESS when reusing EXISTING_SETTLEMENT_ADDRESS. No transaction sent." >&2
   exit 1
 fi
+if [[ -n "${EXISTING_EXECUTOR_ADDRESS:-}" && -z "${EXISTING_SETTLEMENT_ADDRESS:-}" ]]; then
+  echo "FAILED: set EXISTING_SETTLEMENT_ADDRESS when reusing EXISTING_EXECUTOR_ADDRESS. No transaction sent." >&2
+  exit 1
+fi
 
 if [[ -n "${EXISTING_TOKEN_ADDRESS:-}" ]]; then
   TOKEN="$(verify_existing_contract "DemoSettlementToken" "$EXISTING_TOKEN_ADDRESS")"
 else
   TOKEN="$(deploy_contract "DemoSettlementToken" "contracts/DemoSettlementToken.sol:DemoSettlementToken" 'constructor(address)' "$DEPLOYER_ADDRESS")"
 fi
+verify_contract_owner "DemoSettlementToken" "$TOKEN" "$DEPLOYER_ADDRESS"
 if [[ -n "${EXISTING_SETTLEMENT_ADDRESS:-}" ]]; then
   SETTLEMENT="$(verify_existing_contract "InvoiceSettlement" "$EXISTING_SETTLEMENT_ADDRESS")"
 else
   SETTLEMENT="$(deploy_contract "InvoiceSettlement" "contracts/InvoiceSettlement.sol:InvoiceSettlement" 'constructor(address)' "$DEPLOYER_ADDRESS")"
+fi
+if [[ -n "${EXISTING_EXECUTOR_ADDRESS:-}" ]]; then
+  EXECUTOR="$(verify_existing_contract "DemoAgentExecutor" "$EXISTING_EXECUTOR_ADDRESS")"
+  verify_executor_bindings "$EXECUTOR" "$SETTLEMENT" "$PAYER_ADDRESS"
 fi
 INVOICE_ID="$(cast keccak 'INV-1001')"
 TERMS_HASH="$(cast keccak 'INV-1001|Synthetic invoice|10000 dUSD|NET30|v1')"
@@ -310,9 +357,7 @@ if [[ "$INVOICE_STATE" != EXISTS:* ]]; then
   exit 1
 fi
 
-if [[ -n "${EXISTING_EXECUTOR_ADDRESS:-}" ]]; then
-  EXECUTOR="$(verify_existing_contract "DemoAgentExecutor" "$EXISTING_EXECUTOR_ADDRESS")"
-else
+if [[ -z "${EXISTING_EXECUTOR_ADDRESS:-}" ]]; then
   EXECUTOR="$(deploy_contract "DemoAgentExecutor" "contracts/DemoAgentExecutor.sol:DemoAgentExecutor" 'constructor(address,address)' "$SETTLEMENT" "$PAYER_ADDRESS")"
 fi
 
