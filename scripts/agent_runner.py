@@ -347,7 +347,7 @@ def main():
     max_payments = max(1, int(env("AGENT_MAX_PAYMENTS", "3")))
     model = os.environ.get("AGENT_AI_MODEL", "qwen2.5:3b")
     ai_url = os.environ.get("AGENT_AI_URL", "http://127.0.0.1:11434/api/chat")
-    ai_timeout = float(os.environ.get("AGENT_AI_TIMEOUT_SECONDS", "120"))
+    ai_timeout = float(os.environ.get("AGENT_AI_TIMEOUT_SECONDS", "300"))
     payments_sent = 0
     print(
         f"Agent {agent_address} mode={mode} watching invoice {invoice_id}; "
@@ -406,7 +406,7 @@ def main():
                 "nonce": int(nonce),
             },
             "maxAllowedAmount": int(remaining),
-            "decisionDeadline": int(deadline),
+            "observedAt": int(now),
         }
 
         if mode == "deterministic":
@@ -441,6 +441,43 @@ def main():
                 url=ai_url,
                 timeout_seconds=ai_timeout,
             )
+
+            # Re-read on-chain state after inference. A slow/cold model load must not
+            # turn a stale proposal into a valid transaction.
+            fresh_invoice = call_words(
+                settlement, "invoices(bytes32)", invoice_id, rpc=rpc, expected_words=10
+            )
+            fresh_mandate = call_words(
+                settlement, "mandates(bytes32,address)", invoice_id, executor, rpc=rpc, expected_words=6
+            )
+            state_unchanged = (
+                fresh_invoice[9] == status
+                and tuple(fresh_invoice[5:8]) == tuple(invoice[5:8])
+                and tuple(fresh_mandate) == tuple(mandate)
+            )
+            now_after_model = int(time.time())
+            fresh_funded, fresh_paid, fresh_due = fresh_invoice[5], fresh_invoice[6], fresh_invoice[7]
+            fresh_per_payment, fresh_total, fresh_spent, fresh_expiry, fresh_nonce = fresh_mandate[:5]
+            fresh_active = bool(fresh_mandate[5])
+            fresh_maximum = min(
+                int(fresh_funded) - int(fresh_paid),
+                int(fresh_total) - int(fresh_spent),
+                int(fresh_per_payment),
+                payment,
+            )
+            if (
+                not state_unchanged
+                or fresh_invoice[9] != 2
+                or not fresh_active
+                or now_after_model > int(fresh_expiry)
+            ):
+                raise SystemExit("On-chain invoice or mandate changed during AI inference; no transaction sent")
+            if decision["decision"] == "ALLOW" and decision["amount"] > fresh_maximum:
+                raise SystemExit("AI proposal no longer fits the live policy maximum; no transaction sent")
+            deadline = min(int(fresh_expiry), now_after_model + 300)
+            if deadline <= now_after_model:
+                raise SystemExit("No valid execution deadline remains after AI inference; no transaction sent")
+
             context_hash = keccak_text(canonical_json(context))
             decision_record = {
                 "schema": "rwa-agent-decision/v1",
@@ -486,6 +523,7 @@ def main():
                 "decision": decision,
                 "decisionRecord": decision_record,
                 "decisionHash": decision_hash,
+                "intentDeadline": int(deadline),
                 "typedData": typed_data,
                 "signature": signature,
                 "transactionHash": None,
