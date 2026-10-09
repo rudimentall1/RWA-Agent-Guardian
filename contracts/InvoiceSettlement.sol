@@ -40,7 +40,8 @@ contract InvoiceSettlement {
         bool active;
     }
 
-    address public immutable disputeResolver;
+    address public disputeResolver;
+    address public immutable disputeResolverAdmin;
     mapping(bytes32 => Invoice) public invoices;
     mapping(bytes32 => mapping(address => Mandate)) public mandates;
     mapping(bytes32 => uint64) public latestMandateExpiry;
@@ -59,6 +60,7 @@ contract InvoiceSettlement {
     error InsufficientEscrow();
     error TransferFailed();
     error Reentrancy();
+    error InvalidResolver();
 
     event InvoiceRegistered(
         bytes32 indexed invoiceId,
@@ -78,6 +80,7 @@ contract InvoiceSettlement {
     event AgentRevoked(bytes32 indexed invoiceId, address indexed agent);
     event InvoiceDisputed(bytes32 indexed invoiceId, address indexed payer);
     event DisputeResolved(bytes32 indexed invoiceId, bool resumed);
+    event DisputeResolverUpdated(address indexed previousResolver, address indexed newResolver);
     event InvoiceRefunded(bytes32 indexed invoiceId, address indexed payer, uint256 amount);
     event InvoiceCancelled(bytes32 indexed invoiceId, address indexed payer, uint256 refunded);
     event SettlementExecuted(
@@ -90,8 +93,19 @@ contract InvoiceSettlement {
     );
 
     constructor(address resolver) {
-        if (resolver == address(0)) revert Unauthorized();
+        if (resolver == address(0)) revert InvalidResolver();
         disputeResolver = resolver;
+        disputeResolverAdmin = msg.sender;
+    }
+
+    /// @notice Rotate the trusted dispute resolver if its key is lost or must be replaced.
+    /// @dev The deployer remains a privileged admin; production deployments should use a multisig.
+    function setDisputeResolver(address newResolver) external nonReentrant {
+        if (msg.sender != disputeResolverAdmin) revert Unauthorized();
+        if (newResolver == address(0)) revert InvalidResolver();
+        address previousResolver = disputeResolver;
+        disputeResolver = newResolver;
+        emit DisputeResolverUpdated(previousResolver, newResolver);
     }
 
     modifier nonReentrant() {
