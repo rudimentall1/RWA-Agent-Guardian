@@ -63,7 +63,7 @@
       <div class="metric"><span>Terms hash</span><strong id="termsHash">Not loaded</strong></div>
       <div class="metric"><span>Hash preimage check</span><strong id="termsCheck">Not checked</strong></div>
       <div class="metric"><span>Issuer attestation</span><strong id="issuerAttestation">Not checked</strong></div>
-      <p>The live Sepolia contract uses a legacy hash of the synthetic descriptor string. That deployed version does not cryptographically bind the separately stored payer, beneficiary, token, or due date. The newer source contract computes a canonical commitment over those fields and the document hash.</p>
+      <p>The settlement contract computes a canonical commitment over the invoice ID, payer, beneficiary, token, face value, due date, and document hash. The check above recomputes that commitment from the public onchain fields. This demo uses synthetic Sepolia assets and is not a legal receivable.</p>
       <div class="metric"><span>Agent mandate</span><strong id="mandateState">Not loaded</strong></div>
       <div class="metric"><span>Per-payment limit</span><strong id="perLimit">Not loaded</strong></div>
       <div class="metric"><span>Aggregate limit</span><strong id="totalLimit">Not loaded</strong></div>
