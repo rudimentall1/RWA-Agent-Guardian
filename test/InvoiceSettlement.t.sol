@@ -31,6 +31,7 @@ contract InvoiceSettlementTest {
     function setUp() public {
         token = new TestToken();
         settlement = new InvoiceSettlement(address(this));
+        settlement.setIssuerApproval(address(this), true);
         dueAt = uint64(block.timestamp + 30 days);
         mandateExpiry = uint64(block.timestamp + 1 days);
 
@@ -45,6 +46,21 @@ contract InvoiceSettlementTest {
         settlement.fundInvoice(INVOICE_ID, 10_000);
         vm.prank(PAYER);
         settlement.authorizeAgent(INVOICE_ID, AGENT, 2_000, 5_000, mandateExpiry);
+    }
+
+    function testUnapprovedIssuerCannotRegisterInvoice() public {
+        address unapprovedIssuer = address(0x5151);
+        vm.expectRevert(InvoiceSettlement.Unauthorized.selector);
+        vm.prank(unapprovedIssuer);
+        settlement.registerInvoice(keccak256("UNAPPROVED"), PAYER, BENEFICIARY, address(token), 100, dueAt, TERMS_HASH);
+    }
+
+    function testAdminCanApproveAndRevokeIssuer() public {
+        address issuer = address(0x6161);
+        settlement.setIssuerApproval(issuer, true);
+        require(settlement.approvedIssuers(issuer), "issuer not approved");
+        settlement.setIssuerApproval(issuer, false);
+        require(!settlement.approvedIssuers(issuer), "issuer approval not revoked");
     }
 
     function testDemoExecutorCanSettleWhenItsAddressHasAMandate() public {
@@ -256,39 +272,52 @@ contract InvoiceSettlementTest {
         require(settlement.invoiceDocumentHashes(INVOICE_ID) == TERMS_HASH, "document hash not stored");
 
         require(
-            expected != settlement.computeTermsHash(
-                address(this), INVOICE_ID, address(0xB0C), BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
-            ),
+            expected
+                != settlement.computeTermsHash(
+                    address(this), INVOICE_ID, address(0xB0C), BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
+                ),
             "payer change did not alter commitment"
         );
         require(
-            expected != settlement.computeTermsHash(
-                address(this), INVOICE_ID, PAYER, address(0xD00E), address(token), 10_000, dueAt, TERMS_HASH
-            ),
+            expected
+                != settlement.computeTermsHash(
+                    address(this), INVOICE_ID, PAYER, address(0xD00E), address(token), 10_000, dueAt, TERMS_HASH
+                ),
             "beneficiary change did not alter commitment"
         );
         require(
-            expected != settlement.computeTermsHash(
-                address(this), INVOICE_ID, PAYER, BENEFICIARY, address(0x1234), 10_000, dueAt, TERMS_HASH
-            ),
+            expected
+                != settlement.computeTermsHash(
+                    address(this), INVOICE_ID, PAYER, BENEFICIARY, address(0x1234), 10_000, dueAt, TERMS_HASH
+                ),
             "token change did not alter commitment"
         );
         require(
-            expected != settlement.computeTermsHash(
-                address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_001, dueAt, TERMS_HASH
-            ),
+            expected
+                != settlement.computeTermsHash(
+                    address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_001, dueAt, TERMS_HASH
+                ),
             "face value change did not alter commitment"
         );
         require(
-            expected != settlement.computeTermsHash(
-                address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt + 1, TERMS_HASH
-            ),
+            expected
+                != settlement.computeTermsHash(
+                    address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt + 1, TERMS_HASH
+                ),
             "due date change did not alter commitment"
         );
         require(
-            expected != settlement.computeTermsHash(
-                address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, keccak256("other-document")
-            ),
+            expected
+                != settlement.computeTermsHash(
+                    address(this),
+                    INVOICE_ID,
+                    PAYER,
+                    BENEFICIARY,
+                    address(token),
+                    10_000,
+                    dueAt,
+                    keccak256("other-document")
+                ),
             "document hash change did not alter commitment"
         );
     }
@@ -316,6 +345,32 @@ contract InvoiceSettlementTest {
         require(token.balanceOf(address(settlement)) == 0, "escrow should be empty");
     }
 
+    function testBeneficiaryCanClaimRemainingEscrowAfterMaturityGrace() public {
+        vm.warp(uint256(dueAt) + 30 days + 1);
+        vm.prank(BENEFICIARY);
+        settlement.claimMaturedInvoice(INVOICE_ID);
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        require(inv.paid == inv.funded, "matured claim did not settle funded balance");
+        require(inv.status == InvoiceSettlement.Status.CLAIMED, "matured claim status mismatch");
+        require(token.balanceOf(BENEFICIARY) == 10_000, "beneficiary did not receive remaining escrow");
+    }
+
+    function testDisputeTimeoutReopensInvoice() public {
+        vm.prank(PAYER);
+        settlement.disputeInvoice(INVOICE_ID);
+        vm.warp(block.timestamp + settlement.DISPUTE_TIMEOUT() + 1);
+        settlement.expireDispute(INVOICE_ID);
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        require(inv.status == InvoiceSettlement.Status.ACCEPTED, "timed out dispute remains frozen");
+    }
+
+    function testResolverCannotResolveAfterDisputeTimeout() public {
+        vm.prank(PAYER);
+        settlement.disputeInvoice(INVOICE_ID);
+        vm.warp(block.timestamp + settlement.DISPUTE_TIMEOUT() + 1);
+        vm.expectRevert(InvoiceSettlement.InvalidDeadline.selector);
+        settlement.resolveDispute(INVOICE_ID, false);
+    }
 
     function testCannotRefundBeforeInvoiceDueDateEvenAfterMandateExpiry() public {
         vm.warp(uint256(mandateExpiry) + 1);
@@ -345,7 +400,7 @@ contract InvoiceSettlementTest {
     }
 
     function testReauthorizationExtendsCancellationWait() public {
-        uint64 extendedExpiry = uint64(block.timestamp + 60 days);
+        uint64 extendedExpiry = dueAt + 10 days;
         vm.prank(PAYER);
         settlement.authorizeAgent(INVOICE_ID, AGENT, 2_000, 5_000, extendedExpiry);
 
@@ -363,16 +418,13 @@ contract InvoiceSettlementTest {
         require(token.balanceOf(PAYER) == 10_000, "unused escrow not fully refunded");
     }
 
-
     function testFeeOnTransferTokenCannotUnderfundEscrow() public {
         TestFeeToken feeToken = new TestFeeToken();
         bytes32 feeInvoice = keccak256("INV-FEE-FUNDING");
         feeToken.mint(PAYER, 10_000);
         vm.prank(PAYER);
         feeToken.approve(address(settlement), 10_000);
-        settlement.registerInvoice(
-            feeInvoice, PAYER, BENEFICIARY, address(feeToken), 10_000, dueAt, TERMS_HASH
-        );
+        settlement.registerInvoice(feeInvoice, PAYER, BENEFICIARY, address(feeToken), 10_000, dueAt, TERMS_HASH);
         vm.prank(PAYER);
         settlement.acceptInvoice(feeInvoice);
         feeToken.setFeeBps(1_000);
@@ -393,9 +445,7 @@ contract InvoiceSettlementTest {
         feeToken.mint(PAYER, 10_000);
         vm.prank(PAYER);
         feeToken.approve(address(settlement), 10_000);
-        settlement.registerInvoice(
-            feeInvoice, PAYER, BENEFICIARY, address(feeToken), 10_000, dueAt, TERMS_HASH
-        );
+        settlement.registerInvoice(feeInvoice, PAYER, BENEFICIARY, address(feeToken), 10_000, dueAt, TERMS_HASH);
         vm.prank(PAYER);
         settlement.acceptInvoice(feeInvoice);
         vm.prank(PAYER);
@@ -415,7 +465,6 @@ contract InvoiceSettlementTest {
         require(feeToken.balanceOf(address(settlement)) == 10_000, "failed payout changed escrow balance");
         require(feeToken.balanceOf(BENEFICIARY) == 0, "beneficiary received partial fee payout");
     }
-
 
     function testResolverAdminCanRotateDisputeResolver() public {
         address nextResolver = address(0x123456);
@@ -442,7 +491,6 @@ contract InvoiceSettlementTest {
         settlement.setDisputeResolver(address(0));
     }
 
-
     function testFuzzAggregateLimitRejectsAdditionalPayment(uint128 fuzzedAmount) public {
         vm.prank(AGENT);
         settlement.settle(INVOICE_ID, 2_000, 0, uint64(block.timestamp + 1 hours));
@@ -460,7 +508,6 @@ contract InvoiceSettlementTest {
         require(mandate.spent == 4_000 && mandate.nonce == 2, "rejected payment changed mandate");
         require(token.balanceOf(BENEFICIARY) == 4_000, "rejected payment transferred tokens");
     }
-
 
     function testDemoScenarioAllowsTwoThousandBlocksThreeThousandAndStopsAtFiveThousand() public {
         vm.prank(AGENT);
@@ -487,24 +534,31 @@ contract InvoiceSettlementTest {
         require(token.balanceOf(address(settlement)) == 5_000, "remaining escrow mismatch");
     }
 
-
     function testCanonicalTermsHashBindsIssuerAndInvoiceId() public {
         bytes32 expected = settlement.computeTermsHash(
             address(this), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
         );
 
         require(
-            expected != settlement.computeTermsHash(
-                address(0xCAFE), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
-            ),
+            expected
+                != settlement.computeTermsHash(
+                    address(0xCAFE), INVOICE_ID, PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
+                ),
             "issuer change did not alter commitment"
         );
         require(
-            expected != settlement.computeTermsHash(
-                address(this), keccak256("INV-2026-002"), PAYER, BENEFICIARY, address(token), 10_000, dueAt, TERMS_HASH
-            ),
+            expected
+                != settlement.computeTermsHash(
+                    address(this),
+                    keccak256("INV-2026-002"),
+                    PAYER,
+                    BENEFICIARY,
+                    address(token),
+                    10_000,
+                    dueAt,
+                    TERMS_HASH
+                ),
             "invoice ID change did not alter commitment"
         );
     }
-
 }

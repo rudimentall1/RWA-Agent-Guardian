@@ -2,7 +2,7 @@
 
 **Invoice escrow with onchain mandate enforcement.**
 
-The prototype models a narrow, testable trade-finance flow: an issuer registers an invoice record, the payer accepts it, funds are deposited into escrow, and a payer-authorized executor contract can make capped partial payments to the named beneficiary. There is no separately running AI agent or LLM in this version.
+The prototype models a narrow, testable trade-finance flow: an issuer registers an invoice record, the payer accepts it, funds are deposited into escrow, and a payer-authorized executor contract can make capped partial payments to the named beneficiary. There is no LLM. The repository now includes an optional deterministic off-chain scheduler (`scripts/agent_runner.py`) that can submit payments through the narrow executor using a separate agent-owner key; it is not an autonomous reasoning agent.
 
 **[Watch the demo in your browser](https://rudimentall1.github.io/RWA-Agent-Guardian/video.html)**
 
@@ -14,11 +14,14 @@ The key rule is about invoice state, not just wallet balance: the executor canno
 - A separate test-only token fixture.
 - A synthetic invoice record storing a terms hash alongside the payer, beneficiary, payment token, face value, and due date. The current public deployment uses a legacy hash that covers only a fixed synthetic descriptor. The current source computes a versioned canonical commitment over issuer, invoice ID, payer, beneficiary, token, face value, due date, and a separately stored document hash.
 - Explicit lifecycle: REGISTERED to ACCEPTED, then DISPUTED, SETTLED, or CANCELLED.
-- Payer-controlled agent authorization, revocation, per-payment and aggregate limits.
+- Admin-managed issuer allowlist plus payer-controlled executor authorization, revocation, per-payment and aggregate limits.
 - Partial settlement, nonce/deadline checks, escrow accounting, late settlement under a still-valid mandate, and dispute freeze.
 - Foundry tests for allowed settlement and important failure paths.
 
 ## Important limitations
+
+- The issuer allowlist is controlled by the settlement admin. It is not an issuer attestation, legal verification, or proof that an invoice corresponds to an enforceable receivable. A beneficiary can claim remaining funded escrow only after the invoice due date plus a 30-day grace period and after the latest mandate expiry; the payer refund path is limited to that grace window.
+- The deterministic runner needs a separately configured agent-owner key and a payer-created on-chain mandate for the executor. The payer must still accept and fund the invoice and authorize the executor before the runner can operate.
 
 This is a hackathon prototype, not an audited financial product. The invoice and payment token are synthetic; no real receivable, legal ownership claim, or regulated asset is represented. The resolver remains a trusted role, and its admin remains privileged. Production use would need a real invoice document with a verifiable issuer attestation, a real governance/dispute process, and independent review.
 
@@ -29,14 +32,14 @@ The demo is a static page in **ui/**. It requires an injected wallet connected t
     cd ui
     python3 -m http.server 8091
 
-For a deployment, copy **.env.example** to **.env** and set the deployer key, payer wallet, and beneficiary address locally. Keep **.env** out of Git. Then run:
+For a fresh deployment, copy **.env.example** to **.env** and set the deployer key, payer wallet, beneficiary address, and `AGENT_OWNER_ADDRESS` locally. The agent-owner address must differ from the payer and be controlled by the private key supplied to the runner. Keep **.env** out of Git. Then run:
 
     set -a
     source ./.env
     set +a
     bash scripts/deploy-sepolia.sh
 
-The script deploys a synthetic payment token, the settlement contract, and a narrow agent executor in sequence with explicit gas limits. It stops when any transaction fails, registers a demo invoice, mints test tokens to the payer, and writes public addresses to deployment config files. Copy the resulting public addresses into **ui/config.js** based on **ui/config.example.js**. The connected payer must accept the invoice, approve and fund escrow, and authorize the executor before running the valid and over-limit scenarios.
+The script deploys a synthetic payment token, the settlement contract, and a narrow agent executor in sequence with explicit gas limits. It approves the deployer as an invoice issuer, stops when any transaction fails, registers a demo invoice, mints test tokens to the payer, and writes public addresses to deployment config files. When reusing a legacy settlement contract, a missing invoice cannot be registered until that contract supports issuer approval; the script fails before sending the invoice-registration transaction. Copy the resulting public addresses into **ui/config.js** based on **ui/config.example.js**. The payer must accept the invoice, approve and fund escrow, and authorize the executor before running the valid and over-limit scenarios. The **New invoice** button creates another synthetic invoice with the same payer, beneficiary, and face value; use the approved issuer wallet to register it, then reconnect as the payer to accept and fund it. To run the off-chain scheduler, set `AGENT_PRIVATE_KEY` to the key matching `agentOwner` in `deployments-sepolia.json`, then run `python3 scripts/agent_runner.py`. Configure `AGENT_PAYMENT_AMOUNT`, `AGENT_INTERVAL_SECONDS`, and `AGENT_MAX_PAYMENTS` to control the deterministic schedule.
 
 ## Submission brief
 
@@ -47,6 +50,10 @@ A concise summary of the problem, implementation, demo links, test commands, pro
 The walkthrough has a browser-based player at [Watch the demo](https://rudimentall1.github.io/RWA-Agent-Guardian/video.html). The MP4 is also kept in **demo/** in this repository. The player uses the same video file and supports playback and seeking without requiring a manual download.
 
 The public deployment has already reached its 5,000 dUSD aggregate spending limit. This is the expected final state, so a new settlement preflight on that invoice should return BLOCK. The current deployment is not a resettable sandbox. It predates the latest source hardening; its contracts do not have the new expiry-refund, resolver-rotation, or exact-balance-transfer checks.
+
+## Threat model
+
+See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for assets, trust assumptions, controls, and known gaps.
 
 ## Build and test
 

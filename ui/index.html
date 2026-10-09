@@ -54,7 +54,7 @@
 
   <div class="grid">
     <section class="panel">
-      <h2>Invoice INV-1001</h2>
+      <h2 id="invoiceHeading">Invoice INV-1001</h2>
       <div class="metric"><span>Face value</span><strong>10,000 dUSD</strong></div>
       <div class="metric"><span>Settlement state</span><strong id="invoiceState">Not loaded</strong></div>
       <div class="metric"><span>Escrow funded</span><strong id="funded">Not loaded</strong></div>
@@ -67,7 +67,7 @@
       <div class="metric"><span>Per-payment limit</span><strong id="perLimit">Not loaded</strong></div>
       <div class="metric"><span>Aggregate limit</span><strong id="totalLimit">Not loaded</strong></div>
       <div class="metric"><span>Mandate spent</span><strong id="spent">Not loaded</strong></div>
-      <div class="row"><button id="refresh">Refresh state</button></div>
+      <div class="row"><button id="refresh">Refresh state</button><button id="newInvoice">New invoice</button></div>
     </section>
 
     <section class="panel">
@@ -112,9 +112,11 @@
 <script src="./preflight-policy.js"></script>
 <script>
 (() => {
-  const cfg = window.AEGIS_CONFIG;
+  const cfg = window.RWA_AGENT_GUARDIAN_CONFIG || window.AEGIS_CONFIG;
+  let activeInvoiceId = cfg?.invoiceId;
+  try { activeInvoiceId = localStorage.getItem("rwa-agent-guardian-invoice-id") || activeInvoiceId; } catch (_) { /* private browsing may disable storage */ }
   const $ = (id) => document.getElementById(id);
-  const states = ["NONE", "REGISTERED", "ACCEPTED", "DISPUTED", "SETTLED", "CANCELLED"];
+  const states = ["NONE", "REGISTERED", "ACCEPTED", "DISPUTED", "SETTLED", "CANCELLED", "CLAIMED"];
   const tokenAbi = [
     "function balanceOf(address) view returns (uint256)",
     "function approve(address,uint256) returns (bool)",
@@ -127,6 +129,8 @@
     "function invoices(bytes32) view returns (address issuer,address payer,address beneficiary,address token,uint128 faceValue,uint128 funded,uint128 paid,uint64 dueAt,bytes32 termsHash,uint8 status)",
     "function mandates(bytes32,address) view returns (uint128 perPaymentLimit,uint128 totalLimit,uint128 spent,uint64 expiresAt,uint64 nonce,bool active)",
     "function invoiceDocumentHashes(bytes32) view returns (bytes32)",
+    "function approvedIssuers(address) view returns (bool)",
+    "function registerInvoice(bytes32,address,address,address,uint128,uint64,bytes32)",
     "function computeTermsHash(address,bytes32,address,address,address,uint128,uint64,bytes32) pure returns (bytes32)",
     "function acceptInvoice(bytes32)",
     "function fundInvoice(bytes32,uint128)",
@@ -161,7 +165,7 @@
     $("decision").className = "status" + (kind ? " " + kind : "");
   }
   function assertConfigured() {
-    if (!cfg || !cfg.token || !cfg.settlement || !cfg.agentExecutor || !cfg.invoiceId ||
+    if (!cfg || !cfg.token || !cfg.settlement || !cfg.agentExecutor || !activeInvoiceId ||
         cfg.token.endsWith("0000000000000000000000000000000000000000")) {
       throw new Error("Deployment addresses are missing. Fill ui/config.js from the Sepolia deployment.");
     }
@@ -244,7 +248,7 @@
     const network = await provider.getNetwork();
     if (Number(network.chainId) !== Number(cfg.chainId)) throw new Error("Switch your wallet to Sepolia (chain 11155111).");
     if (settlement && userAddress) {
-      const invoice = await settlement.invoices(cfg.invoiceId);
+      const invoice = await settlement.invoices(activeInvoiceId);
       if (invoice.payer.toLowerCase() !== userAddress.toLowerCase()) {
         throw new Error("Connect the payer wallet registered for this invoice.");
       }
@@ -283,7 +287,7 @@
       note("Wallet connected, but it is on chain " + network.chainId + ". Switch to Sepolia (" + cfg.chainId + ") to submit transactions. Public state remains available.", "bad");
       return;
     }
-    const invoice = await readSettlement.invoices(cfg.invoiceId);
+    const invoice = await readSettlement.invoices(activeInvoiceId);
     if (invoice.payer.toLowerCase() !== userAddress.toLowerCase()) {
       note("Public state is available. To submit transactions, connect the registered payer wallet shown below.", "bad");
       return;
@@ -295,8 +299,8 @@
     let inv, mandate, balance;
     try {
       [inv, mandate] = await Promise.all([
-        readSettlement.invoices(cfg.invoiceId),
-        readSettlement.mandates(cfg.invoiceId, cfg.agentExecutor)
+        readSettlement.invoices(activeInvoiceId),
+        readSettlement.mandates(activeInvoiceId, cfg.agentExecutor)
       ]);
       balance = await readToken.balanceOf(inv.payer);
     } catch (error) {
@@ -310,13 +314,14 @@
       const fallbackSettlement = new ethers.Contract(cfg.settlement, settlementAbi, provider);
       const fallbackToken = new ethers.Contract(cfg.token, tokenAbi, provider);
       [inv, mandate] = await Promise.all([
-        fallbackSettlement.invoices(cfg.invoiceId),
-        fallbackSettlement.mandates(cfg.invoiceId, cfg.agentExecutor)
+        fallbackSettlement.invoices(activeInvoiceId),
+        fallbackSettlement.mandates(activeInvoiceId, cfg.agentExecutor)
       ]);
       balance = await fallbackToken.balanceOf(inv.payer);
     }
     const now = BigInt(Math.floor(Date.now() / 1000));
     const invoiceStatus = Number(inv.status);
+    $("invoiceHeading").textContent = "Invoice " + activeInvoiceId.slice(0, 10) + "…";
     const invoiceLabel = states[invoiceStatus] || String(inv.status);
     const limitReached = mandate.active && mandate.spent >= mandate.totalLimit;
     const mandateStatus = !mandate.active ? "Revoked" :
@@ -327,9 +332,9 @@
     $("balance").textContent = formatDUSD(balance) + " dUSD";
     $("termsHash").textContent = inv.termsHash;
     try {
-      const documentHash = await readSettlement.invoiceDocumentHashes(cfg.invoiceId);
+      const documentHash = await readSettlement.invoiceDocumentHashes(activeInvoiceId);
       const expectedTermsHash = await readSettlement.computeTermsHash(
-        inv.issuer, cfg.invoiceId, inv.payer, inv.beneficiary, inv.token,
+        inv.issuer, activeInvoiceId, inv.payer, inv.beneficiary, inv.token,
         inv.faceValue, inv.dueAt, documentHash
       );
       $("termsCheck").textContent =
@@ -389,19 +394,53 @@
       decision("The aggregate spending limit has been reached. New settlement requests are expected to return BLOCK.", "bad");
     }
   }
+  async function newInvoice() {
+    try {
+      ensureReadOnlyContracts();
+      if (!signer || !userAddress || !settlement) {
+        throw new Error("Connect the approved issuer wallet to create a new invoice. Then reconnect as the registered payer to accept and fund it.");
+      }
+      let isApproved;
+      try { isApproved = await readSettlement.approvedIssuers(userAddress); }
+      catch (_) { throw new Error("This Sepolia settlement is an older deployment and does not support new invoice creation. A fresh deployment is required."); }
+      if (!isApproved) throw new Error("The connected wallet is not on the settlement contract's issuer allowlist. Use the approved issuer wallet.");
+      const current = await readSettlement.invoices(activeInvoiceId);
+      if (userAddress.toLowerCase() === current.payer.toLowerCase()) {
+        throw new Error("The issuer cannot be the payer. Connect the approved issuer wallet, which must differ from the registered payer.");
+      }
+      const block = await readProvider.getBlock("latest");
+      const unique = "RWA-AGENT-GUARDIAN-" + Date.now() + "-" + crypto.randomUUID();
+      const newId = ethers.keccak256(ethers.toUtf8Bytes(unique));
+      const documentHash = ethers.keccak256(ethers.toUtf8Bytes("synthetic-demo-document-" + unique));
+      const dueAt = BigInt(block.timestamp) + 30n * 24n * 60n * 60n;
+      note("Registering a new synthetic demo invoice on Sepolia...", "");
+      const txResponse = await settlement.registerInvoice(
+        newId, current.payer, current.beneficiary, current.token, current.faceValue, dueAt, documentHash
+      );
+      const receipt = await txResponse.wait();
+      if (!receipt || receipt.status !== 1) throw new Error("Invoice registration transaction failed.");
+      activeInvoiceId = newId;
+      try { localStorage.setItem("rwa-agent-guardian-invoice-id", activeInvoiceId); } catch (_) { /* keep current-session state */ }
+      note("New invoice registered: " + newId + ". Reconnect as the payer to accept, fund, and authorize the executor.", "good");
+      await refresh();
+    } catch (error) {
+      note(explainError(error), "bad");
+    }
+  }
+
   async function accept() {
-    return tx("Accept invoice", () => settlement.acceptInvoice(cfg.invoiceId));
+    return tx("Accept invoice", () => settlement.acceptInvoice(activeInvoiceId));
   }
   async function approve() {
     return tx("Approve payment token", () => token.approve(cfg.settlement, ethers.parseUnits("10000", 6)));
   }
   async function fund() {
-    return tx("Fund escrow", () => settlement.fundInvoice(cfg.invoiceId, ethers.parseUnits("10000", 6)));
+    return tx("Fund escrow", () => settlement.fundInvoice(activeInvoiceId, ethers.parseUnits("10000", 6)));
   }
   async function authorize() {
     const expiry = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60);
     return tx("Authorize agent", () => settlement.authorizeAgent(
-      cfg.invoiceId,
+      activeInvoiceId,
       cfg.agentExecutor,
       ethers.parseUnits("2000", 6),
       ethers.parseUnits("5000", 6),
@@ -415,8 +454,8 @@
       ensureReadOnlyContracts();
       const rawAmount = amount6(value);
       const [invoice, mandate, latestBlock] = await Promise.all([
-        readSettlement.invoices(cfg.invoiceId),
-        readSettlement.mandates(cfg.invoiceId, cfg.agentExecutor),
+        readSettlement.invoices(activeInvoiceId),
+        readSettlement.mandates(activeInvoiceId, cfg.agentExecutor),
         readProvider.getBlock("latest")
       ]);
       if (!mandate.active) {
@@ -442,7 +481,7 @@
         new ethers.VoidSigner(invoice.payer, readProvider)
       );
       stage = "simulation";
-      await simulationExecutor.execute.staticCall(cfg.invoiceId, rawAmount, mandate.nonce, deadline);
+      await simulationExecutor.execute.staticCall(activeInvoiceId, rawAmount, mandate.nonce, deadline);
       lastCheckedAmount = rawAmount;
       decision("ALLOW: the request passes the current on-chain mandate. This is a read-only simulation, not a payment.", "good");
       return { rawAmount, nonce: mandate.nonce, deadline };
@@ -468,7 +507,7 @@
     try {
       const checked = await preflight($("amount").value);
       return await tx("Execute authorized settlement", () =>
-        executor.execute(cfg.invoiceId, checked.rawAmount, checked.nonce, checked.deadline)
+        executor.execute(activeInvoiceId, checked.rawAmount, checked.nonce, checked.deadline)
       );
     } catch (_) { /* keep the preflight or transaction result visible */ }
   }
@@ -479,6 +518,7 @@
   }
 
   $("connect").addEventListener("click", () => connect().catch(e => note(explainError(e), "bad")));
+  $("newInvoice").addEventListener("click", newInvoice);
   $("refresh").addEventListener("click", () => refresh().then(() => note("Invoice state refreshed.", "good")).catch(e => note(e.message, "bad")));
   $("accept").addEventListener("click", () => accept().catch(() => {}));
   $("approve").addEventListener("click", () => approve().catch(() => {}));

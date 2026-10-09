@@ -17,3 +17,19 @@ The test creates a new token and settlement contract for the test run. It exerci
 It then checks that the beneficiary received exactly 5,000 dUSD, the invoice records 5,000 dUSD paid, the mandate spent and nonce are unchanged by rejected requests, and the remaining 5,000 dUSD stays in escrow.
 
 This is a repeatable local contract test, not a claim that the existing public Sepolia invoice can be reset. The published Sepolia invoice is already at its aggregate cap and remains read-only for new successful settlement attempts.
+
+## Deterministic off-chain agent runner
+
+For a fresh deployment with the current source, configure `AGENT_OWNER_ADDRESS` to an address that differs from the payer and is controlled by the `AGENT_PRIVATE_KEY` used by the runner. The payer must accept and fund the invoice and authorize the executor contract first. Then run:
+
+```sh
+AGENT_PRIVATE_KEY=0x... \
+AGENT_PAYMENT_AMOUNT=2000000000 \
+AGENT_INTERVAL_SECONDS=30 \
+AGENT_MAX_PAYMENTS=3 \
+python3 scripts/agent_runner.py
+```
+
+The amount is in token base units, so `2000000000` is 2,000 dUSD for this six-decimal test token. The runner reads the current nonce, remaining funded escrow, and remaining mandate allowance before every payment. With the demo's 2,000 per-payment and 5,000 aggregate caps, the intended run is 2,000, 2,000, then 1,000 dUSD. It cannot bypass a revoked, expired, or exhausted on-chain mandate. Do not put the private key in Git or in the browser UI.
+
+This runner has not yet been exercised against a fresh live Sepolia deployment, and the published video does not yet contain this run.

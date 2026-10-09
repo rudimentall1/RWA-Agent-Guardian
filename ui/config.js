@@ -1,4 +1,4 @@
-window.AEGIS_CONFIG = {
+window.RWA_AGENT_GUARDIAN_CONFIG = {
   "chainId": 11155111,
   "token": "0x5BbCBE09abAdE15Fbf9a36caB689675F58b50A71",
   "settlement": "0x4932eF4E444622F7C85be8CD7c85e0a4D2285885",

@@ -21,6 +21,8 @@ contract Deploy {
         address deployer = vm.addr(privateKey);
         address payer = vm.envAddress("PAYER_ADDRESS");
         address beneficiary = vm.envAddress("BENEFICIARY_ADDRESS");
+        address agentOwner = vm.envAddress("AGENT_OWNER_ADDRESS");
+        require(agentOwner != payer, "agent owner must differ from payer");
 
         uint128 faceValue = 10_000 * 10 ** 6;
         bytes32 invoiceId = keccak256("INV-1001");
@@ -30,7 +32,8 @@ contract Deploy {
         vm.startBroadcast(privateKey);
         DemoSettlementToken token = new DemoSettlementToken(deployer);
         InvoiceSettlement settlement = new InvoiceSettlement(deployer);
-        DemoAgentExecutor executor = new DemoAgentExecutor(address(settlement), payer);
+        DemoAgentExecutor executor = new DemoAgentExecutor(address(settlement), agentOwner);
+        settlement.setIssuerApproval(deployer, true);
 
         settlement.registerInvoice(invoiceId, payer, beneficiary, address(token), faceValue, dueAt, documentHash);
         token.mint(payer, faceValue);

@@ -18,6 +18,16 @@ if [[ -z "${PAYER_ADDRESS:-}" || -z "${BENEFICIARY_ADDRESS:-}" ]]; then
   exit 1
 fi
 
+AGENT_OWNER_ADDRESS="${AGENT_OWNER_ADDRESS:-}"
+if [[ ! "$AGENT_OWNER_ADDRESS" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
+  echo "Set AGENT_OWNER_ADDRESS to the separate agent key address. No transaction sent." >&2
+  exit 1
+fi
+if [[ "${AGENT_OWNER_ADDRESS,,}" == "${PAYER_ADDRESS,,}" ]]; then
+  echo "AGENT_OWNER_ADDRESS must differ from PAYER_ADDRESS for the autonomous-agent demo. No transaction sent." >&2
+  exit 1
+fi
+
 KEY="$DEPLOYER_PRIVATE_KEY"
 if [[ "$KEY" != 0x* && "$KEY" != 0X* ]]; then
   KEY="0x$KEY"
@@ -271,7 +281,7 @@ else
 fi
 if [[ -n "${EXISTING_EXECUTOR_ADDRESS:-}" ]]; then
   EXECUTOR="$(verify_existing_contract "DemoAgentExecutor" "$EXISTING_EXECUTOR_ADDRESS")"
-  verify_executor_bindings "$EXECUTOR" "$SETTLEMENT" "$PAYER_ADDRESS"
+  verify_executor_bindings "$EXECUTOR" "$SETTLEMENT" "$AGENT_OWNER_ADDRESS"
 fi
 INVOICE_ID="$(cast keccak 'INV-1001')"
 TERMS_HASH="$(cast keccak 'INV-1001|Synthetic invoice|10000 dUSD|NET30|v1')"
@@ -344,6 +354,9 @@ INVOICEPY
 
 INVOICE_STATE="$(read_invoice_state)"
 if [[ "$INVOICE_STATE" == "MISSING" ]]; then
+  # New source requires an approved issuer. If this is an older settlement contract,
+  # the call fails before invoice registration; no invoice write is sent.
+  send_and_confirm "approve invoice issuer" "$SETTLEMENT" "setIssuerApproval(address,bool)" "$DEPLOYER_ADDRESS" true
   CHAIN_TIMESTAMP="$(cast block latest --rpc-url "$SEPOLIA_RPC_URL" --json | python3 -c 'import json,sys; print(int(json.load(sys.stdin)["timestamp"], 16))')"
   DUE_AT="$((CHAIN_TIMESTAMP + 2592000))"
   send_and_confirm "register invoice" "$SETTLEMENT" \
@@ -358,7 +371,7 @@ if [[ "$INVOICE_STATE" != EXISTS:* ]]; then
 fi
 
 if [[ -z "${EXISTING_EXECUTOR_ADDRESS:-}" ]]; then
-  EXECUTOR="$(deploy_contract "DemoAgentExecutor" "contracts/DemoAgentExecutor.sol:DemoAgentExecutor" 'constructor(address,address)' "$SETTLEMENT" "$PAYER_ADDRESS")"
+  EXECUTOR="$(deploy_contract "DemoAgentExecutor" "contracts/DemoAgentExecutor.sol:DemoAgentExecutor" 'constructor(address,address)' "$SETTLEMENT" "$AGENT_OWNER_ADDRESS")"
 fi
 
 DUE_AT="$(printf '%s' "$INVOICE_STATE" | cut -d: -f2)"
@@ -382,11 +395,11 @@ else
   echo "Payer already holds sufficient demo settlement tokens ($BALANCE); skipping duplicate mint." >&2
 fi
 
-python3 - "$TOKEN" "$SETTLEMENT" "$EXECUTOR" "$INVOICE_ID" "$ONCHAIN_TERMS_HASH" "$DUE_AT" "$DEPLOYER_ADDRESS" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" <<'PY'
+python3 - "$TOKEN" "$SETTLEMENT" "$EXECUTOR" "$INVOICE_ID" "$ONCHAIN_TERMS_HASH" "$DUE_AT" "$DEPLOYER_ADDRESS" "$PAYER_ADDRESS" "$BENEFICIARY_ADDRESS" "$AGENT_OWNER_ADDRESS" <<'PY'
 import json, sys
 from pathlib import Path
 
-token, settlement, executor, invoice_id, terms_hash, due_at, deployer, payer, beneficiary = sys.argv[1:]
+token, settlement, executor, invoice_id, terms_hash, due_at, deployer, payer, beneficiary, agent_owner = sys.argv[1:]
 record = {
     "chainId": 11155111,
     "token": token,
@@ -397,16 +410,18 @@ record = {
     "dueAt": int(due_at),
     "deployer": deployer,
     "payer": payer,
-    "beneficiary": beneficiary
+    "beneficiary": beneficiary,
+    "agentOwner": agent_owner
 }
 Path("deployments-sepolia.json").write_text(json.dumps(record, indent=2) + "\n")
 Path("ui/config.js").write_text(
-    "window.AEGIS_CONFIG = " + json.dumps({
+    "window.RWA_AGENT_GUARDIAN_CONFIG = " + json.dumps({
         "chainId": 11155111,
         "token": token,
         "settlement": settlement,
         "agentExecutor": executor,
-        "invoiceId": invoice_id
+        "invoiceId": invoice_id,
+        "agentOwner": agent_owner
     }, indent=2) + ";\n"
 )
 print("\nWrote deployment config using public addresses only.")
