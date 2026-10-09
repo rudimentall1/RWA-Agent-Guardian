@@ -8,3 +8,5 @@ lib/
 node_modules/
 .deploy_key
 .DS_Store
+__pycache__/
+*.py[cod]
