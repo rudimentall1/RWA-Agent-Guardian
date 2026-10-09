@@ -194,7 +194,7 @@ def parse_ai_decision(raw, max_allowed):
     return {"decision": decision, "amount": amount, "reason": reason.strip()}
 
 
-def ask_ollama(context, max_allowed, model, url, timeout_seconds=30):
+def ask_ollama(context, max_allowed, model, url, timeout_seconds=120):
     """Ask a local Ollama model for a JSON proposal; failure or malformed output never falls back to ALLOW."""
     system_prompt = (
         "You are the decision component of a payment agent. You do not have spending authority. "
@@ -347,7 +347,7 @@ def main():
     max_payments = max(1, int(env("AGENT_MAX_PAYMENTS", "3")))
     model = os.environ.get("AGENT_AI_MODEL", "qwen2.5:3b")
     ai_url = os.environ.get("AGENT_AI_URL", "http://127.0.0.1:11434/api/chat")
-    ai_timeout = float(os.environ.get("AGENT_AI_TIMEOUT_SECONDS", "30"))
+    ai_timeout = float(os.environ.get("AGENT_AI_TIMEOUT_SECONDS", "120"))
     payments_sent = 0
     print(
         f"Agent {agent_address} mode={mode} watching invoice {invoice_id}; "
