@@ -105,6 +105,7 @@
 
 <script src="./config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/ethers@6.15.0/dist/ethers.umd.min.js"></script>
+<script src="./preflight-policy.js"></script>
 <script>
 (() => {
   const cfg = window.AEGIS_CONFIG;
@@ -226,12 +227,6 @@
   }
   function formatDUSD(value) {
     return ethers.formatUnits(value, 6).replace(/0+$/, "").replace(/\.$/, "");
-  }
-  function isContractRevert(error) {
-    return error?.code === "CALL_EXCEPTION" ||
-      Boolean(error?.revert?.name) ||
-      [error?.data, error?.info?.error?.data, error?.error?.data]
-        .some(value => typeof value === "string" && /^0x[0-9a-fA-F]{8,}$/.test(value));
   }
   function amount6(value) {
     if (!/^\d+(\.\d{1,6})?$/.test(value.trim())) throw new Error("Enter a non-negative amount with up to 6 decimals.");
@@ -429,8 +424,9 @@
       return { rawAmount, nonce: mandate.nonce, deadline };
     } catch (error) {
       lastCheckedAmount = null;
-      if (error.policyBlock || (stage === "simulation" && isContractRevert(error))) {
-        const errorName = parsedErrorName(error);
+      const errorName = parsedErrorName(error);
+      if (error.policyBlock ||
+          (stage === "simulation" && window.RWA_PREFLIGHT_POLICY.isPolicyRejection(errorName))) {
         const reason = errorName === "AgentLimitExceeded" && predictedLimitMessage ?
           predictedLimitMessage : explainError(error);
         decision("BLOCK: " + reason + " No transaction was submitted and no wallet signature was requested.", "bad");
