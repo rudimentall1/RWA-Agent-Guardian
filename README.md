@@ -12,7 +12,7 @@ The key rule is about invoice state, not just wallet balance: the executor canno
 
 - One Solidity settlement contract, a synthetic ERC-20 payment token, and a narrow agent executor.
 - A separate test-only token fixture.
-- A synthetic invoice record storing a terms hash alongside the payer, beneficiary, payment token, face value, and due date. The current hash covers only a fixed synthetic descriptor, not all of those fields.
+- A synthetic invoice record storing a terms hash alongside the payer, beneficiary, payment token, face value, and due date. The current public deployment uses a legacy hash that covers only a fixed synthetic descriptor. The current source computes a versioned canonical commitment over issuer, invoice ID, payer, beneficiary, token, face value, due date, and a separately stored document hash.
 - Explicit lifecycle: REGISTERED to ACCEPTED, then DISPUTED, SETTLED, or CANCELLED.
 - Payer-controlled agent authorization, revocation, per-payment and aggregate limits.
 - Partial settlement, nonce/deadline checks, escrow accounting, late settlement under a still-valid mandate, and dispute freeze.
@@ -20,7 +20,7 @@ The key rule is about invoice state, not just wallet balance: the executor canno
 
 ## Important limitations
 
-This is a hackathon prototype, not an audited financial product. The invoice and payment token are synthetic; no real receivable, legal ownership claim, or regulated asset is represented. The resolver remains a trusted role, and its admin remains privileged. Production use would need a real governance/dispute process, a canonical invoice digest that binds all material fields, and independent review.
+This is a hackathon prototype, not an audited financial product. The invoice and payment token are synthetic; no real receivable, legal ownership claim, or regulated asset is represented. The resolver remains a trusted role, and its admin remains privileged. Production use would need a real invoice document with a verifiable issuer attestation, a real governance/dispute process, and independent review.
 
 ## Browser demo and Sepolia deployment
 
