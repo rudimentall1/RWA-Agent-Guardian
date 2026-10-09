@@ -59,6 +59,9 @@
       <div class="metric"><span>Escrow funded</span><strong id="funded">Not loaded</strong></div>
       <div class="metric"><span>Already paid</span><strong id="paid">Not loaded</strong></div>
       <div class="metric"><span>Payer token balance</span><strong id="balance">Not loaded</strong></div>
+      <div class="metric"><span>Terms hash</span><strong id="termsHash">Not loaded</strong></div>
+      <div class="metric"><span>Hash preimage check</span><strong id="termsCheck">Not checked</strong></div>
+      <p>The current commitment hashes the synthetic descriptor string only. It does not cryptographically bind the separately stored payer, beneficiary, token, or due date.</p>
       <div class="metric"><span>Agent mandate</span><strong id="mandateState">Not loaded</strong></div>
       <div class="metric"><span>Per-payment limit</span><strong id="perLimit">Not loaded</strong></div>
       <div class="metric"><span>Aggregate limit</span><strong id="totalLimit">Not loaded</strong></div>
@@ -319,6 +322,12 @@
     $("funded").textContent = formatDUSD(inv.funded) + " dUSD";
     $("paid").textContent = formatDUSD(inv.paid) + " dUSD";
     $("balance").textContent = formatDUSD(balance) + " dUSD";
+    const termsPreimage = "INV-1001|Synthetic invoice|10000 dUSD|NET30|v1";
+    const expectedTermsHash = ethers.keccak256(ethers.toUtf8Bytes(termsPreimage));
+    $("termsHash").textContent = inv.termsHash;
+    $("termsCheck").textContent =
+      inv.termsHash.toLowerCase() === expectedTermsHash.toLowerCase() ?
+        "Preimage matches" : "Mismatch";
     $("mandateState").textContent = mandateStatus;
     $("perLimit").textContent = formatDUSD(mandate.perPaymentLimit) + " dUSD";
     $("totalLimit").textContent = formatDUSD(mandate.totalLimit) + " dUSD";
