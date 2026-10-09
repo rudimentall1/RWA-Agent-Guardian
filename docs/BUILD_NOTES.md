@@ -29,3 +29,11 @@ A separate prototype was built before the event and informed the choice of probl
 Sepolia activated Glamsterdam on 6 October. The EIP-8037/EIP-8038 changes reprice state creation and access, so the old fixed deployment limits were no longer reliable. The first token deployment's receipt showed `status=0x0` and exactly the 3,000,000 gas limit; the predicted address had no code. The live RPC currently estimates about 3.12M gas for `DemoSettlementToken`, 11.50M for `InvoiceSettlement`, and 1.28M for `DemoAgentExecutor`.
 
 `scripts/deploy-sepolia.sh` now estimates the full constructor payload against the selected RPC before broadcasting each deployment and adds 35% headroom. It refuses to submit if that margin would exceed the configured ceiling below the 16,777,216 per-transaction gas cap. The script still checks receipt status and deployed bytecode before proceeding. These estimates are specific to the current testnet rules and should be recomputed on the target RPC rather than copied into future scripts.
+
+## Hardening added before submission
+
+- The settlement admin now maintains an issuer allowlist. This is a permissioning control, not a legal attestation or proof that an invoice is a real receivable.
+- An unresolved dispute automatically reopens after seven days if the resolver has not acted. This avoids an indefinite protocol-level freeze but does not adjudicate the commercial dispute.
+- After the due date plus a 30-day grace period, and after the latest mandate expiry, the named beneficiary can claim the remaining funded escrow. The payer refund path is restricted to the grace window.
+- `scripts/agent_runner.py` is a deterministic off-chain scheduler. It reads the on-chain invoice and executor mandate, caps each payment to funded escrow and remaining mandate authority, and calls the executor using a separate agent-owner key. It is not an LLM or a production-grade autonomous agent.
+- `test/InvoiceSettlementInvariant.t.sol` checks accounting and mandate invariants. CI now runs coverage and Slither with three documented detector exclusions for intentional balance-delta checks, event ordering, and timestamp-based expiry logic.
