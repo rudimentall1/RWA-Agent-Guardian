@@ -36,6 +36,12 @@ For a deployment, copy **.env.example** to **.env** and set the deployer key, pa
 
 The script deploys a synthetic payment token, the settlement contract, and a narrow agent executor in sequence with explicit gas limits. It stops when any transaction fails, registers a demo invoice, mints test tokens to the payer, and writes public addresses to deployment config files. Copy the resulting public addresses into **ui/config.js** based on **ui/config.example.js**. The connected payer must accept the invoice, approve and fund escrow, and authorize the executor before running the valid and over-limit scenarios.
 
+## Demo recording
+
+The walkthrough is available at [demo/RWA-Agent-Guardian-demo.mp4](https://github.com/rudimentall1/RWA-Agent-Guardian/blob/main/demo/RWA-Agent-Guardian-demo.mp4). It shows the Sepolia test deployment, including the per-payment rejection, partial settlements, and the aggregate limit.
+
+The public deployment has already reached its 5,000 dUSD aggregate spending limit. This is the expected final state, so a new settlement preflight on that invoice should return BLOCK. The current deployment is not a resettable sandbox.
+
 ## Build and test
 
 Requires Foundry and Solidity 0.8.24.

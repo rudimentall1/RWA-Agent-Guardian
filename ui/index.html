@@ -49,7 +49,7 @@
     <button class="primary" id="connect">Connect wallet</button>
   </header>
 
-  <div id="notice" class="status">Connect a wallet on Sepolia to inspect the invoice and run the demo.</div>
+  <div id="notice" class="status">Loading public Sepolia state. Connect the registered payer wallet to submit transactions.</div>
 
   <div class="grid">
     <section class="panel">
@@ -58,13 +58,17 @@
       <div class="metric"><span>Settlement state</span><strong id="invoiceState">Not loaded</strong></div>
       <div class="metric"><span>Escrow funded</span><strong id="funded">Not loaded</strong></div>
       <div class="metric"><span>Already paid</span><strong id="paid">Not loaded</strong></div>
-      <div class="metric"><span>Token balance</span><strong id="balance">Not loaded</strong></div>
+      <div class="metric"><span>Payer token balance</span><strong id="balance">Not loaded</strong></div>
+      <div class="metric"><span>Agent mandate</span><strong id="mandateState">Not loaded</strong></div>
+      <div class="metric"><span>Per-payment limit</span><strong id="perLimit">Not loaded</strong></div>
+      <div class="metric"><span>Aggregate limit</span><strong id="totalLimit">Not loaded</strong></div>
+      <div class="metric"><span>Mandate spent</span><strong id="spent">Not loaded</strong></div>
       <div class="row"><button id="refresh">Refresh state</button></div>
     </section>
 
     <section class="panel">
       <h2>Addresses</h2>
-      <div class="metric"><span>Connected payer</span><strong id="payer">Not loaded</strong></div>
+      <div class="metric"><span>Registered payer</span><strong id="payer">Not loaded</strong></div>
       <div class="metric"><span>Beneficiary</span><strong id="beneficiary">Not loaded</strong></div>
       <div class="metric"><span>Agent executor</span><strong id="executor">Not loaded</strong></div>
       <div class="metric"><span>Network</span><strong id="network">Sepolia · 11155111</strong></div>
@@ -82,7 +86,7 @@
 
     <section class="panel wide">
       <h2>2. Check before signing</h2>
-      <p>The preflight is a read-only simulation. A rejected action is shown as BLOCK and does not open the wallet prompt.</p>
+      <p>Anyone can inspect public Sepolia state and run the preflight simulation without connecting a wallet. A rejected request is shown as BLOCK and never opens a wallet prompt. Executing a permitted payment requires the registered payer wallet.</p>
       <label for="amount">Settlement amount (dUSD)</label>
       <input id="amount" value="2000" inputmode="decimal">
       <div class="row">
@@ -108,17 +112,38 @@
   const states = ["NONE", "REGISTERED", "ACCEPTED", "DISPUTED", "SETTLED", "CANCELLED"];
   const tokenAbi = [
     "function balanceOf(address) view returns (uint256)",
-    "function approve(address,uint256) returns (bool)"
+    "function approve(address,uint256) returns (bool)",
+    "error Unauthorized()",
+    "error InvalidAddress()",
+    "error InsufficientBalance()",
+    "error InsufficientAllowance()"
   ];
   const settlementAbi = [
     "function invoices(bytes32) view returns (address issuer,address payer,address beneficiary,address token,uint128 faceValue,uint128 funded,uint128 paid,uint64 dueAt,bytes32 termsHash,uint8 status)",
     "function mandates(bytes32,address) view returns (uint128 perPaymentLimit,uint128 totalLimit,uint128 spent,uint64 expiresAt,uint64 nonce,bool active)",
     "function acceptInvoice(bytes32)",
     "function fundInvoice(bytes32,uint128)",
-    "function authorizeAgent(bytes32,address,uint128,uint128,uint64)"
+    "function authorizeAgent(bytes32,address,uint128,uint128,uint64)",
+    "error Unauthorized()",
+    "error InvalidInvoice()",
+    "error InvoiceExists(bytes32)",
+    "error WrongStatus()",
+    "error InvalidTerms()",
+    "error InvalidAmount()",
+    "error InvalidAgent()",
+    "error InvalidDeadline()",
+    "error InvalidNonce()",
+    "error AgentLimitExceeded()",
+    "error InsufficientEscrow()",
+    "error TransferFailed()",
+    "error Reentrancy()"
   ];
-  const executorAbi = ["function execute(bytes32,uint128,uint64,uint64)"];
+  const executorAbi = [
+    "function execute(bytes32,uint128,uint64,uint64)",
+    "error Unauthorized()"
+  ];
   let provider, signer, userAddress, token, settlement, executor, lastCheckedAmount;
+  let readProvider, readToken, readSettlement;
 
   function note(message, kind = "") {
     $("notice").textContent = message;
@@ -133,6 +158,80 @@
         cfg.token.endsWith("0000000000000000000000000000000000000000")) {
       throw new Error("Deployment addresses are missing. Fill ui/config.js from the Sepolia deployment.");
     }
+  }
+  function ensureReadOnlyContracts() {
+    assertConfigured();
+    if (!readProvider) {
+      readProvider = new ethers.JsonRpcProvider(
+        "https://ethereum-sepolia-rpc.publicnode.com",
+        { name: "sepolia", chainId: Number(cfg.chainId) }
+      );
+      readToken = new ethers.Contract(cfg.token, tokenAbi, readProvider);
+      readSettlement = new ethers.Contract(cfg.settlement, settlementAbi, readProvider);
+    }
+  }
+  const friendlyErrors = {
+    Unauthorized: "This wallet is not authorized for the requested action. Connect the registered payer wallet.",
+    InvalidInvoice: "The configured invoice was not found on this contract.",
+    InvoiceExists: "This invoice ID is already registered.",
+    WrongStatus: "The invoice is not in an accepted state or has been disputed or cancelled.",
+    InvalidTerms: "The invoice terms or addresses are invalid.",
+    InvalidAmount: "The amount is invalid or exceeds the invoice face value.",
+    InvalidAgent: "The agent mandate is inactive, expired, or invalid.",
+    InvalidDeadline: "The execution deadline expired or extends beyond the mandate expiry.",
+    InvalidNonce: "The request nonce is stale or has already been used. Refresh state before retrying.",
+    AgentLimitExceeded: "The request exceeds the per-payment limit or the aggregate spending limit.",
+    InsufficientEscrow: "The escrow does not contain enough funds for this payment.",
+    TransferFailed: "The token transfer failed. The contract reverted the settlement.",
+    Reentrancy: "The contract rejected the call through its reentrancy guard.",
+    InsufficientBalance: "The payer token balance is insufficient.",
+    InsufficientAllowance: "The settlement contract has not been approved to transfer enough tokens.",
+    InvalidAddress: "The transaction contains an invalid address."
+  };
+  function parsedErrorName(error) {
+    const candidates = [
+      error?.data,
+      error?.info?.error?.data,
+      error?.error?.data,
+      error?.revert?.data,
+      error?.cause?.data,
+      error?.info?.payload?.error?.data
+    ];
+    const data = candidates.find(value => typeof value === "string" && /^0x[0-9a-fA-F]{8,}$/.test(value));
+    if (data) {
+      const interfaces = [
+        settlement?.interface, executor?.interface, token?.interface,
+        readSettlement?.interface, readToken?.interface
+      ].filter(Boolean);
+      for (const iface of interfaces) {
+        try {
+          const parsed = iface.parseError(data);
+          if (parsed) return parsed.name;
+        } catch (_) { /* try the next contract ABI */ }
+      }
+    }
+    return error?.revert?.name || error?.errorName || null;
+  }
+  function explainError(error) {
+    if (error?.code === "ACTION_REJECTED" || error?.code === 4001) {
+      return "Wallet request cancelled.";
+    }
+    const revertName = parsedErrorName(error);
+    if (revertName && friendlyErrors[revertName]) return friendlyErrors[revertName];
+    if (revertName) return "The contract rejected the request (" + revertName + ").";
+    const message = error?.shortMessage || error?.reason || error?.message || String(error);
+    if (/user rejected|user denied/i.test(message)) return "Wallet request cancelled.";
+    if (/network|chain/i.test(message)) return message;
+    return message;
+  }
+  function formatDUSD(value) {
+    return ethers.formatUnits(value, 6).replace(/0+$/, "").replace(/\.$/, "");
+  }
+  function isContractRevert(error) {
+    return error?.code === "CALL_EXCEPTION" ||
+      Boolean(error?.revert?.name) ||
+      [error?.data, error?.info?.error?.data, error?.error?.data]
+        .some(value => typeof value === "string" && /^0x[0-9a-fA-F]{8,}$/.test(value));
   }
   function amount6(value) {
     if (!/^\d+(\.\d{1,6})?$/.test(value.trim())) throw new Error("Enter a non-negative amount with up to 6 decimals.");
@@ -162,7 +261,7 @@
       await refresh();
       return receipt;
     } catch (error) {
-      note(error.shortMessage || error.reason || error.message || String(error), "bad");
+      note(explainError(error), "bad");
       throw error;
     }
   }
@@ -175,28 +274,101 @@
     userAddress = await signer.getAddress();
     const network = await provider.getNetwork();
     $("connect").textContent = userAddress.slice(0, 6) + "…" + userAddress.slice(-4);
-    $("payer").textContent = userAddress;
-    $("network").textContent = network.name + " · " + network.chainId;
     token = new ethers.Contract(cfg.token, tokenAbi, signer);
     settlement = new ethers.Contract(cfg.settlement, settlementAbi, signer);
     executor = new ethers.Contract(cfg.agentExecutor, executorAbi, signer);
     await refresh();
-    note("Wallet connected. Review the invoice state before authorizing or settling.", "good");
+    if (Number(network.chainId) !== Number(cfg.chainId)) {
+      note("Wallet connected, but it is on chain " + network.chainId + ". Switch to Sepolia (" + cfg.chainId + ") to submit transactions. Public state remains available.", "bad");
+      return;
+    }
+    const invoice = await readSettlement.invoices(cfg.invoiceId);
+    if (invoice.payer.toLowerCase() !== userAddress.toLowerCase()) {
+      note("Public state is available. To submit transactions, connect the registered payer wallet shown below.", "bad");
+      return;
+    }
+    note("Wallet connected as the registered payer. Review the public contract state before submitting transactions.", "good");
   }
   async function refresh() {
-    await connected();
-    const inv = await settlement.invoices(cfg.invoiceId);
-    const mandate = await settlement.mandates(cfg.invoiceId, cfg.agentExecutor);
-    const balance = await token.balanceOf(userAddress);
-    $("invoiceState").textContent = states[Number(inv.status)] || String(inv.status);
-    $("funded").textContent = ethers.formatUnits(inv.funded, 6) + " dUSD";
-    $("paid").textContent = ethers.formatUnits(inv.paid, 6) + " dUSD";
-    $("balance").textContent = ethers.formatUnits(balance, 6) + " dUSD";
+    ensureReadOnlyContracts();
+    let inv, mandate, balance;
+    try {
+      [inv, mandate] = await Promise.all([
+        readSettlement.invoices(cfg.invoiceId),
+        readSettlement.mandates(cfg.invoiceId, cfg.agentExecutor)
+      ]);
+      balance = await readToken.balanceOf(inv.payer);
+    } catch (error) {
+      if (!provider) {
+        throw new Error("Could not load public Sepolia state. Check the network connection and retry. " + explainError(error));
+      }
+      const network = await provider.getNetwork();
+      if (Number(network.chainId) !== Number(cfg.chainId)) {
+        throw new Error("Public RPC is unavailable and the connected wallet is not on Sepolia. Switch networks or retry.");
+      }
+      const fallbackSettlement = new ethers.Contract(cfg.settlement, settlementAbi, provider);
+      const fallbackToken = new ethers.Contract(cfg.token, tokenAbi, provider);
+      [inv, mandate] = await Promise.all([
+        fallbackSettlement.invoices(cfg.invoiceId),
+        fallbackSettlement.mandates(cfg.invoiceId, cfg.agentExecutor)
+      ]);
+      balance = await fallbackToken.balanceOf(inv.payer);
+    }
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const invoiceStatus = Number(inv.status);
+    const invoiceLabel = states[invoiceStatus] || String(inv.status);
+    const limitReached = mandate.active && mandate.spent >= mandate.totalLimit;
+    const mandateStatus = !mandate.active ? "Revoked" :
+      (mandate.expiresAt < now ? "Expired" : (limitReached ? "Limit reached" : "Active"));
+    $("invoiceState").textContent = invoiceLabel;
+    $("funded").textContent = formatDUSD(inv.funded) + " dUSD";
+    $("paid").textContent = formatDUSD(inv.paid) + " dUSD";
+    $("balance").textContent = formatDUSD(balance) + " dUSD";
+    $("mandateState").textContent = mandateStatus;
+    $("perLimit").textContent = formatDUSD(mandate.perPaymentLimit) + " dUSD";
+    $("totalLimit").textContent = formatDUSD(mandate.totalLimit) + " dUSD";
+    $("spent").textContent = formatDUSD(mandate.spent) + " dUSD";
     $("beneficiary").textContent = inv.beneficiary;
     $("executor").textContent = cfg.agentExecutor;
     $("payer").textContent = inv.payer;
-    $("network").textContent = "Sepolia · " + cfg.chainId;
-    $("authorize").textContent = mandate.active ? "Update agent mandate" : "Authorize agent";
+    $("network").textContent = "Sepolia · " + cfg.chainId + (userAddress ? " · wallet connected" : " · read only");
+    const accepted = invoiceStatus === 2;
+    const registered = invoiceStatus === 1;
+    const fullyFunded = inv.funded >= inv.faceValue;
+    let walletOnSepolia = false;
+    let walletCanWrite = false;
+    if (signer && provider && userAddress) {
+      try {
+        const walletNetwork = await provider.getNetwork();
+        walletOnSepolia = Number(walletNetwork.chainId) === Number(cfg.chainId);
+        walletCanWrite = walletOnSepolia && userAddress.toLowerCase() === inv.payer.toLowerCase();
+      } catch (_) { /* public read-only state is still available */ }
+    }
+    const walletPrompt = !userAddress ? "Connect payer wallet" :
+      (!walletOnSepolia ? "Switch wallet to Sepolia" :
+        (!walletCanWrite ? "Use registered payer wallet" : ""));
+    $("network").textContent = "Sepolia · " + cfg.chainId + (walletCanWrite ? " · payer connected" :
+      (userAddress ? (walletOnSepolia ? " · different wallet" : " · wallet on another network") : " · read only"));
+    $("accept").disabled = !walletCanWrite || !registered;
+    $("accept").textContent = registered ?
+      (walletCanWrite ? "Accept invoice" : walletPrompt + " to accept") :
+      (accepted ? "Invoice already accepted" : "Unavailable in " + invoiceLabel);
+    $("approve").disabled = !walletCanWrite || !accepted || fullyFunded;
+    $("approve").textContent = fullyFunded ? "Escrow fully funded" :
+      (accepted ? (walletCanWrite ? "Approve 10,000 dUSD" : walletPrompt + " to approve") : "Accept invoice first");
+    $("fund").disabled = !walletCanWrite || !accepted || fullyFunded;
+    $("fund").textContent = fullyFunded ? "Escrow fully funded" :
+      (accepted ? (walletCanWrite ? "Fund escrow" : walletPrompt + " to fund escrow") : "Accept invoice first");
+    $("authorize").disabled = !walletCanWrite || !accepted || limitReached;
+    $("authorize").textContent = !accepted ? "Invoice must be accepted" :
+      (limitReached ? "Spending limit reached" :
+        (mandate.active ? (walletCanWrite ? "Update agent mandate" : walletPrompt + " to update mandate") :
+          (walletCanWrite ? "Authorize agent" : walletPrompt + " to authorize")));
+    $("execute").disabled = !walletCanWrite;
+    $("execute").textContent = walletCanWrite ? "Execute allowed settlement" : walletPrompt + " to execute";
+    if (limitReached && $("decision").textContent === "No action checked yet.") {
+      decision("The aggregate spending limit has been reached. New settlement requests are expected to return BLOCK.", "bad");
+    }
   }
   async function accept() {
     return tx("Accept invoice", () => settlement.acceptInvoice(cfg.invoiceId));
@@ -218,21 +390,53 @@
     ));
   }
   async function preflight(value) {
-    await connected();
-    const rawAmount = amount6(value);
-    const mandate = await settlement.mandates(cfg.invoiceId, cfg.agentExecutor);
-    if (!mandate.active) throw new Error("No active mandate. Authorize the agent first.");
-    const now = BigInt(Math.floor(Date.now() / 1000));
-    const deadline = now + 3600n < mandate.expiresAt ? now + 3600n : mandate.expiresAt;
+    let stage = "setup";
+    let predictedLimitMessage = null;
     try {
-      await executor.execute.staticCall(cfg.invoiceId, rawAmount, mandate.nonce, deadline);
+      ensureReadOnlyContracts();
+      const rawAmount = amount6(value);
+      const [invoice, mandate, latestBlock] = await Promise.all([
+        readSettlement.invoices(cfg.invoiceId),
+        readSettlement.mandates(cfg.invoiceId, cfg.agentExecutor),
+        readProvider.getBlock("latest")
+      ]);
+      if (!mandate.active) {
+        const error = new Error("No active agent mandate. Authorize the agent first.");
+        error.policyBlock = true;
+        throw error;
+      }
+      const now = BigInt(latestBlock.timestamp);
+      const deadline = now + 3600n < mandate.expiresAt ? now + 3600n : mandate.expiresAt;
+      if (Number(invoice.status) === 2 && mandate.active && mandate.expiresAt > now &&
+          rawAmount > 0n && rawAmount <= invoice.faceValue) {
+        if (rawAmount > mandate.perPaymentLimit) {
+          predictedLimitMessage = "Payment amount " + formatDUSD(rawAmount) +
+            " dUSD exceeds the per-payment cap of " + formatDUSD(mandate.perPaymentLimit) + " dUSD.";
+        } else if (mandate.spent + rawAmount > mandate.totalLimit) {
+          predictedLimitMessage = "The aggregate cap is " + formatDUSD(mandate.totalLimit) +
+            " dUSD, and " + formatDUSD(mandate.spent) + " dUSD has already been spent.";
+        }
+      }
+      const simulationExecutor = new ethers.Contract(
+        cfg.agentExecutor,
+        executorAbi,
+        new ethers.VoidSigner(invoice.payer, readProvider)
+      );
+      stage = "simulation";
+      await simulationExecutor.execute.staticCall(cfg.invoiceId, rawAmount, mandate.nonce, deadline);
       lastCheckedAmount = rawAmount;
-      decision("ALLOW : action passes the current onchain mandate. No transaction has been sent yet.", "good");
+      decision("ALLOW: the request passes the current on-chain mandate. This is a read-only simulation, not a payment.", "good");
       return { rawAmount, nonce: mandate.nonce, deadline };
     } catch (error) {
       lastCheckedAmount = null;
-      decision("BLOCK : onchain simulation rejected the request. Wallet signing was not requested. " +
-        (error.revert?.name || error.reason || error.shortMessage || "Policy check failed."), "bad");
+      if (error.policyBlock || (stage === "simulation" && isContractRevert(error))) {
+        const errorName = parsedErrorName(error);
+        const reason = errorName === "AgentLimitExceeded" && predictedLimitMessage ?
+          predictedLimitMessage : explainError(error);
+        decision("BLOCK: " + reason + " No transaction was submitted and no wallet signature was requested.", "bad");
+      } else {
+        decision("Check not completed: " + explainError(error), "bad");
+      }
       throw error;
     }
   }
@@ -254,7 +458,7 @@
     catch (_) { /* expected: a 3,000 dUSD request exceeds the 2,000 cap */ }
   }
 
-  $("connect").addEventListener("click", () => connect().catch(e => note(e.message, "bad")));
+  $("connect").addEventListener("click", () => connect().catch(e => note(explainError(e), "bad")));
   $("refresh").addEventListener("click", () => refresh().then(() => note("Invoice state refreshed.", "good")).catch(e => note(e.message, "bad")));
   $("accept").addEventListener("click", () => accept().catch(() => {}));
   $("approve").addEventListener("click", () => approve().catch(() => {}));
@@ -263,7 +467,13 @@
   $("preflight").addEventListener("click", checkButton);
   $("execute").addEventListener("click", execute);
   $("attack").addEventListener("click", attack);
-  if (!cfg) note("Missing ui/config.js. Copy config.example.js and set deployed Sepolia addresses.", "bad");
+  if (!cfg) {
+    note("Missing ui/config.js. Copy config.example.js and set deployed Sepolia addresses.", "bad");
+  } else {
+    refresh()
+      .then(() => { if (!signer) note("Public Sepolia state loaded. Connect the registered payer wallet to submit transactions.", "good"); })
+      .catch(error => { if (!signer) note("Public state could not be loaded. You can still connect a Sepolia wallet. " + explainError(error), "bad"); });
+  }
 })();
 </script>
 </body>

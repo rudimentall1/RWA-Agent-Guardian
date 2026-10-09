@@ -34,6 +34,11 @@ These are current contract-state reads, not a substitute for inspecting individu
 - DemoAgentExecutor deployment: https://sepolia.etherscan.io/tx/0x489dc887df8f99239e95f80e4e951aca89f909d49497f87129b20fbe19852108
 - Invoice registration: https://sepolia.etherscan.io/tx/0x8d5bc5df144898f06bc20d99b1c6c1c3f053b5ed2e3a6c33693d122380a43c3c
 - Payer token mint: https://sepolia.etherscan.io/tx/0x348c32ccfdabbdccd574f31dac1362959a7d72e807ed6bbabd386df76c2b8bd8
+- Settlement of 2,000 dUSD: https://sepolia.etherscan.io/tx/0xf04e2be3f6f22d59c786b7631505315214266b4214ab524fc0273c4b67d69959
+- Settlement of 2,000 dUSD: https://sepolia.etherscan.io/tx/0xac695defc48e23a2476f62084269ed5b5f3af10bfed896bbee7c78f3ef6a876a
+- Settlement of 1,000 dUSD: https://sepolia.etherscan.io/tx/0x76ade7ebef4aed50e2d1772341bc751865756cdeb9e763a53eb31e8aa8401c4f
+
+The three settlement transaction receipts have status 1 on Sepolia. The aggregate-cap rejection is a read-only simulation and has no transaction hash because it is not broadcast.
 
 Only transaction records identified for this deployment are listed here. Do not attribute records from the earlier contract deployment to the current contracts.
 
