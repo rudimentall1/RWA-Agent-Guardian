@@ -114,8 +114,13 @@
 <script>
 (() => {
   const cfg = window.RWA_AGENT_GUARDIAN_CONFIG || window.AEGIS_CONFIG;
+  // Scope remembered invoice IDs to this deployment so an invoice saved from
+  // an older settlement contract cannot override the fresh deployment config.
+  const invoiceStorageKey = cfg?.settlement
+    ? "rwa-agent-guardian-invoice-id:" + cfg.settlement.toLowerCase()
+    : "rwa-agent-guardian-invoice-id";
   let activeInvoiceId = cfg?.invoiceId;
-  try { activeInvoiceId = localStorage.getItem("rwa-agent-guardian-invoice-id") || activeInvoiceId; } catch (_) { /* private browsing may disable storage */ }
+  try { activeInvoiceId = localStorage.getItem(invoiceStorageKey) || activeInvoiceId; } catch (_) { /* private browsing may disable storage */ }
   const $ = (id) => document.getElementById(id);
   const states = ["NONE", "REGISTERED", "ACCEPTED", "DISPUTED", "SETTLED", "CANCELLED", "CLAIMED"];
   const tokenAbi = [
@@ -463,7 +468,7 @@
       const receipt = await txResponse.wait();
       if (!receipt || receipt.status !== 1) throw new Error("Invoice registration transaction failed.");
       activeInvoiceId = newId;
-      try { localStorage.setItem("rwa-agent-guardian-invoice-id", activeInvoiceId); } catch (_) { /* keep current-session state */ }
+      try { localStorage.setItem(invoiceStorageKey, activeInvoiceId); } catch (_) { /* keep current-session state */ }
       note("New invoice registered: " + newId + ". Reconnect as the payer to accept, fund, and authorize the executor.", "good");
       await refresh();
     } catch (error) {
