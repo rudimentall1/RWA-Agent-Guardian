@@ -2,17 +2,17 @@
 
 **Escrow settlement for agent-operated invoice payments.**
 
-The prototype models a narrow, testable trade-finance flow: an issuer registers an invoice commitment, the payer accepts it, funds are deposited into escrow, and a payer-authorized agent can make capped partial payments to the named beneficiary.
+The prototype models a narrow, testable trade-finance flow: an issuer registers an invoice record, the payer accepts it, funds are deposited into escrow, and a payer-authorized executor contract can make capped partial payments to the named beneficiary. There is no separately running AI agent or LLM in this version.
 
 **[Watch the demo in your browser](https://rudimentall1.github.io/RWA-Agent-Guardian/video.html)**
 
-The key rule is about invoice state, not just wallet balance: an agent cannot settle an unaccepted or disputed invoice. Each mandate has a per-payment cap, an aggregate cap, an expiry, and a monotonic nonce. A failed token transfer reverts the state change. A dispute resolver can resume the invoice or cancel it and refund the unpaid escrow balance.
+The key rule is about invoice state, not just wallet balance: the executor cannot settle an unaccepted or disputed invoice. Each mandate has a per-payment cap, an aggregate cap, an expiry, and a monotonic nonce. The source now checks exact token balance changes, supports resolver rotation by a privileged admin, and lets the payer recover unused escrow after the latest mandate expiry. These source-level hardening changes are not active on the already deployed Sepolia contracts.
 
 ## Current scope
 
 - One Solidity settlement contract, a synthetic ERC-20 payment token, and a narrow agent executor.
 - A separate test-only token fixture.
-- A synthetic invoice record bound to a terms hash, payer, beneficiary, payment token, face value, and due date.
+- A synthetic invoice record storing a terms hash alongside the payer, beneficiary, payment token, face value, and due date. The current hash covers only a fixed synthetic descriptor, not all of those fields.
 - Explicit lifecycle: REGISTERED to ACCEPTED, then DISPUTED, SETTLED, or CANCELLED.
 - Payer-controlled agent authorization, revocation, per-payment and aggregate limits.
 - Partial settlement, nonce/deadline checks, escrow accounting, late settlement under a still-valid mandate, and dispute freeze.
@@ -20,7 +20,7 @@ The key rule is about invoice state, not just wallet balance: an agent cannot se
 
 ## Important limitations
 
-This is a hackathon prototype, not an audited financial product. The invoice and payment token used for tests are synthetic; no real receivable, legal ownership claim, or regulated asset is represented. The dispute resolver is a trusted role in this MVP and would need a real governance/dispute process in production.
+This is a hackathon prototype, not an audited financial product. The invoice and payment token are synthetic; no real receivable, legal ownership claim, or regulated asset is represented. The resolver remains a trusted role, and its admin remains privileged. Production use would need a real governance/dispute process, a canonical invoice digest that binds all material fields, and independent review.
 
 ## Browser demo and Sepolia deployment
 
@@ -42,7 +42,7 @@ The script deploys a synthetic payment token, the settlement contract, and a nar
 
 The walkthrough has a browser-based player at [Watch the demo](https://rudimentall1.github.io/RWA-Agent-Guardian/video.html). The MP4 is also kept in **demo/** in this repository. The player uses the same video file and supports playback and seeking without requiring a manual download.
 
-The public deployment has already reached its 5,000 dUSD aggregate spending limit. This is the expected final state, so a new settlement preflight on that invoice should return BLOCK. The current deployment is not a resettable sandbox.
+The public deployment has already reached its 5,000 dUSD aggregate spending limit. This is the expected final state, so a new settlement preflight on that invoice should return BLOCK. The current deployment is not a resettable sandbox. It predates the latest source hardening; its contracts do not have the new expiry-refund, resolver-rotation, or exact-balance-transfer checks.
 
 ## Build and test
 
