@@ -161,6 +161,8 @@ class AgentDecisionTests(unittest.TestCase):
         self.assertEqual(sent["model"], "qwen2.5:3b")
         self.assertEqual(sent["format"]["additionalProperties"], False)
         self.assertEqual(sent["options"]["temperature"], 0)
+        self.assertEqual(sent["options"]["num_ctx"], 2048)
+        self.assertEqual(sent["options"]["num_predict"], 128)
 
     def test_ollama_service_failure_fails_closed(self):
         with patch("agent_runner.urllib.request.urlopen", side_effect=URLError("offline")):
