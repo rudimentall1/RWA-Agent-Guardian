@@ -16,7 +16,8 @@ contract InvoiceSettlement {
         DISPUTED,
         SETTLED,
         CANCELLED,
-        CLAIMED
+        CLAIMED,
+        ESCALATED
     }
 
     struct Invoice {
@@ -366,9 +367,13 @@ contract InvoiceSettlement {
     function resolveDispute(bytes32 invoiceId, bool resume) external nonReentrant {
         if (msg.sender != disputeResolver) revert Unauthorized();
         Invoice storage inv = _invoice(invoiceId);
-        if (inv.status != Status.DISPUTED) revert WrongStatus();
+        if (inv.status != Status.DISPUTED && inv.status != Status.ESCALATED) revert WrongStatus();
         uint64 startedAt = disputeStartedAt[invoiceId];
-        if (startedAt == 0 || block.timestamp > uint256(startedAt) + DISPUTE_TIMEOUT) revert InvalidDeadline();
+        if (startedAt == 0) revert InvalidDeadline();
+        if (
+            (inv.status == Status.DISPUTED && block.timestamp > uint256(startedAt) + DISPUTE_TIMEOUT)
+                || (inv.status == Status.ESCALATED && block.timestamp <= uint256(startedAt) + DISPUTE_TIMEOUT)
+        ) revert InvalidDeadline();
         delete disputeStartedAt[invoiceId];
 
         if (resume) {
@@ -382,15 +387,14 @@ contract InvoiceSettlement {
         emit DisputeResolved(invoiceId, resume);
     }
 
-    /// @notice Reopens an unresolved dispute after a fixed timeout so funds cannot remain frozen forever.
-    /// @dev Timeout resumes the invoice; it does not decide the underlying commercial dispute.
+    /// @notice Escalates an unresolved dispute after the timeout without unfreezing escrow.
+    /// @dev Only the dispute resolver can subsequently resume execution or cancel and refund.
     function expireDispute(bytes32 invoiceId) external nonReentrant {
         Invoice storage inv = _invoice(invoiceId);
         if (inv.status != Status.DISPUTED) revert WrongStatus();
         uint64 startedAt = disputeStartedAt[invoiceId];
         if (startedAt == 0 || block.timestamp <= uint256(startedAt) + DISPUTE_TIMEOUT) revert InvalidDeadline();
-        delete disputeStartedAt[invoiceId];
-        inv.status = Status.ACCEPTED;
+        inv.status = Status.ESCALATED;
         emit DisputeTimedOut(invoiceId);
     }
 
