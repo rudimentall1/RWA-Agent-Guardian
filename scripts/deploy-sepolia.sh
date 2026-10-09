@@ -29,10 +29,42 @@ export SEPOLIA_RPC_URL
 deploy_contract() {
   local label="$1"
   local artifact="$2"
-  local gas_limit="$3"
+  local constructor_signature="$3"
   shift 3
-  local output address
-  echo "Deploying $label (gas limit: $gas_limit)..." >&2
+  local constructor_args=("$@")
+  local bytecode encoded payload estimate_hex gas_limit output address
+
+  # Sepolia activated Glamsterdam on 2026-10-06, which repriced state creation.
+  # Estimate with the live RPC, then add 35% headroom. EIP-7825 caps a tx at
+  # 16,777,216 gas, so stop before broadcast if a safe limit would exceed it.
+  bytecode="$(forge inspect "$artifact" bytecode)"
+  encoded="$(cast abi-encode "$constructor_signature" "${constructor_args[@]}")"
+  payload="${bytecode}${encoded#0x}"
+  if ! estimate_hex="$(cast rpc --rpc-url "$SEPOLIA_RPC_URL" eth_estimateGas \
+      "{\"from\":\"$DEPLOYER_ADDRESS\",\"data\":\"$payload\"}")"; then
+    echo "FAILED: could not estimate gas for $label. No transaction sent." >&2
+    return 1
+  fi
+  if ! gas_limit="$(python3 - "$estimate_hex" <<'GASPY'
+import sys
+try:
+    estimate = int(sys.argv[1].strip().strip('"'), 16)
+except (ValueError, IndexError):
+    print("Invalid eth_estimateGas response", file=sys.stderr)
+    raise SystemExit(1)
+limit = ((estimate * 135 + 99) // 100)
+limit = ((limit + 9999) // 10000) * 10000
+max_tx_gas = 16_700_000
+if estimate <= 0 or limit > max_tx_gas:
+    print(f"Estimated gas {estimate:,}; safe limit {limit:,} exceeds configured cap {max_tx_gas:,}.", file=sys.stderr)
+    raise SystemExit(1)
+print(limit)
+GASPY
+  )"; then
+    echo "FAILED: no safe gas limit established for $label. No transaction sent." >&2
+    return 1
+  fi
+  echo "Deploying $label (RPC estimate: $((gas_limit * 100 / 135)) gas; limit with 35% headroom: $gas_limit)..." >&2
   if ! output="$(forge create "$artifact" \
       --rpc-url "$SEPOLIA_RPC_URL" \
       --private-key "$KEY" \
@@ -41,7 +73,7 @@ deploy_contract() {
       --priority-gas-price "$TX_PRIORITY_FEE_PER_GAS" \
       --timeout 60 \
       --broadcast \
-      --constructor-args "$@" 2>&1)"; then
+      --constructor-args "${constructor_args[@]}" 2>&1)"; then
     printf '%s\n' "$output" >&2
     echo "FAILED: $label. Stopping; no later transaction will be sent." >&2
     return 1
@@ -114,9 +146,9 @@ except Exception: print(0)')"
   echo "$label confirmed: $tx_hash" >&2
 }
 
-TOKEN="$(deploy_contract "DemoSettlementToken" "contracts/DemoSettlementToken.sol:DemoSettlementToken" 3000000 "$DEPLOYER_ADDRESS")"
-SETTLEMENT="$(deploy_contract "InvoiceSettlement" "contracts/InvoiceSettlement.sol:InvoiceSettlement" 8000000 "$DEPLOYER_ADDRESS")"
-EXECUTOR="$(deploy_contract "DemoAgentExecutor" "contracts/DemoAgentExecutor.sol:DemoAgentExecutor" 2000000 "$SETTLEMENT" "$PAYER_ADDRESS")"
+TOKEN="$(deploy_contract "DemoSettlementToken" "contracts/DemoSettlementToken.sol:DemoSettlementToken" 'constructor(address)' "$DEPLOYER_ADDRESS")"
+SETTLEMENT="$(deploy_contract "InvoiceSettlement" "contracts/InvoiceSettlement.sol:InvoiceSettlement" 'constructor(address)' "$DEPLOYER_ADDRESS")"
+EXECUTOR="$(deploy_contract "DemoAgentExecutor" "contracts/DemoAgentExecutor.sol:DemoAgentExecutor" 'constructor(address,address)' "$SETTLEMENT" "$PAYER_ADDRESS")"
 
 INVOICE_ID="$(cast keccak 'INV-1001')"
 TERMS_HASH="$(cast keccak 'INV-1001|Synthetic invoice|10000 dUSD|NET30|v1')"

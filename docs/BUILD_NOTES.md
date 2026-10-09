@@ -22,3 +22,10 @@ The implementation focuses on the invoice payment lifecycle rather than guarding
 ## Prior exploration
 
 A separate prototype was built before the event. The present implementation is materially reworked around invoice acceptance, escrow settlement, and dispute lifecycle rather than the earlier token-transfer guard. The repository history is intended to record new implementation work transparently. Organizers should be asked to confirm eligibility if the overlap in problem framing is a concern.
+
+
+## Sepolia gas repricing (9 October 2026)
+
+Sepolia activated Glamsterdam on 6 October. The EIP-8037/EIP-8038 changes reprice state creation and access, so the old fixed deployment limits were no longer reliable. The first token deployment's receipt showed `status=0x0` and exactly the 3,000,000 gas limit; the predicted address had no code. The live RPC currently estimates about 3.12M gas for `DemoSettlementToken`, 11.50M for `InvoiceSettlement`, and 1.28M for `DemoAgentExecutor`.
+
+`scripts/deploy-sepolia.sh` now estimates the full constructor payload against the selected RPC before broadcasting each deployment and adds 35% headroom. It refuses to submit if that margin would exceed the configured ceiling below the 16,777,216 per-transaction gas cap. The script still checks receipt status and deployed bytecode before proceeding. These estimates are specific to the current testnet rules and should be recomputed on the target RPC rather than copied into future scripts.
