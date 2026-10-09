@@ -61,8 +61,8 @@ def call_words(target, signature, *args, rpc, expected_words):
     return decode_words(raw, expected_words)
 
 
-ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]{40}\\Z")
-BYTES32_RE = re.compile(r"0x[0-9a-fA-F]{64}\\Z")
+ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]{40}\Z")
+BYTES32_RE = re.compile(r"0x[0-9a-fA-F]{64}\Z")
 
 
 def normalize_address(value, name):
