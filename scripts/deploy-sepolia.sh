@@ -55,18 +55,22 @@ deploy_contract() {
     echo "FAILED: could not estimate gas for $label. No transaction sent." >&2
     return 1
   fi
-  if ! gas_limit="$(python3 - "$estimate_hex" <<'GASPY'
+  if ! gas_limit="$(python3 - "$estimate_hex" "$label" <<'GASPY'
 import sys
 try:
     estimate = int(sys.argv[1].strip().strip('"'), 16)
 except (ValueError, IndexError):
     print("Invalid eth_estimateGas response", file=sys.stderr)
     raise SystemExit(1)
-limit = ((estimate * 135 + 99) // 100)
+# InvoiceSettlement creation is close to Sepolia's per-transaction gas cap
+# after Glamsterdam. Use 5% only for that measured deployment; retain 35% for
+# smaller contracts. Never exceed EIP-7825's 16,777,216 gas hard cap.
+headroom = 5 if len(sys.argv) > 2 and sys.argv[2] == "InvoiceSettlement" else 35
+limit = ((estimate * (100 + headroom) + 99) // 100)
 limit = ((limit + 9999) // 10000) * 10000
 max_tx_gas = 16_700_000
 if estimate <= 0 or limit > max_tx_gas:
-    print(f"Estimated gas {estimate:,}; safe limit {limit:,} exceeds configured cap {max_tx_gas:,}.", file=sys.stderr)
+    print(f"Estimated gas {estimate:,}; safe limit {limit:,} with {headroom}% headroom exceeds configured cap {max_tx_gas:,}.", file=sys.stderr)
     raise SystemExit(1)
 print(limit)
 GASPY
@@ -80,7 +84,7 @@ GASPY
     echo "FAILED: could not read pending nonce for $label. No transaction sent." >&2
     return 1
   fi
-  echo "Deploying $label (RPC estimate: $((gas_limit * 100 / 135)) gas; limit with 35% headroom: $gas_limit; nonce: $nonce)..." >&2
+  echo "Deploying $label (gas limit: $gas_limit; nonce: $nonce)..." >&2
   if ! output="$(forge create "$artifact" \
       --rpc-url "$SEPOLIA_RPC_URL" \
       --private-key "$KEY" \
