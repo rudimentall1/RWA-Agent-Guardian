@@ -1,6 +1,6 @@
 # Reproducing the settlement guard scenario
 
-Run the deterministic scenario against fresh Foundry state:
+Run the deterministic scenario against fresh Foundry state. The [test implementation is here](https://github.com/rudimentall1/RWA-Agent-Guardian/blob/main/test/InvoiceSettlement.t.sol#L450).
 
 ```sh
 forge test --match-test testDemoScenarioAllowsTwoThousandBlocksThreeThousandAndStopsAtFiveThousand -vv

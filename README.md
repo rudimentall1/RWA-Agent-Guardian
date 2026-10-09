@@ -54,7 +54,7 @@ To reproduce the full 2,000 dUSD ALLOW, 3,000 dUSD BLOCK, 5,000 dUSD aggregate-c
 
     forge test --match-test testDemoScenarioAllowsTwoThousandBlocksThreeThousandAndStopsAtFiveThousand -vv
 
-See [docs/DEMO_SCENARIO.md](docs/DEMO_SCENARIO.md) for the exact sequence and assertions. This local scenario does not reset or alter the public Sepolia deployment.
+See [docs/DEMO_SCENARIO.md](docs/DEMO_SCENARIO.md) for the exact sequence and assertions. The [test source and scenario function](https://github.com/rudimentall1/RWA-Agent-Guardian/blob/main/test/InvoiceSettlement.t.sol#L450) are linked directly for review. This local scenario does not reset or alter the public Sepolia deployment.
 
 ## Build provenance
 
