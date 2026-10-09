@@ -355,4 +355,30 @@ contract InvoiceSettlementTest {
         require(feeToken.balanceOf(BENEFICIARY) == 0, "beneficiary received partial fee payout");
     }
 
+
+    function testResolverAdminCanRotateDisputeResolver() public {
+        address nextResolver = address(0x123456);
+        settlement.setDisputeResolver(nextResolver);
+        require(settlement.disputeResolver() == nextResolver, "resolver was not updated");
+
+        vm.prank(PAYER);
+        settlement.disputeInvoice(INVOICE_ID);
+        vm.prank(nextResolver);
+        settlement.resolveDispute(INVOICE_ID, false);
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        require(inv.status == InvoiceSettlement.Status.CANCELLED, "new resolver could not resolve dispute");
+    }
+
+    function testNonAdminCannotRotateDisputeResolver() public {
+        vm.expectRevert(InvoiceSettlement.Unauthorized.selector);
+        vm.prank(STRANGER);
+        settlement.setDisputeResolver(STRANGER);
+    }
+
+    function testZeroAddressCannotBecomeDisputeResolver() public {
+        vm.expectRevert(InvoiceSettlement.InvalidResolver.selector);
+        settlement.setDisputeResolver(address(0));
+    }
+
 }
