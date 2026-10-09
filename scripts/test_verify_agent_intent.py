@@ -150,13 +150,14 @@ class VerifyAgentIntentTests(unittest.TestCase):
             "decision": self.decision,
             "contextHash": self.context_hash,
             "decisionHash": self.decision_hash,
+            "intentDeadline": self.intent_deadline,
             "signature": self.signature,
         }
         args = [
             self.config["invoiceId"][2:],
             f"{999:064x}",  # Different amount from signed intent.
             f"{self.context['mandate']['nonce']:064x}",
-            f"{self.context['decisionDeadline']:064x}",
+            f"{self.intent_deadline:064x}",
             self.context_hash[2:],
             self.decision_hash[2:],
             f"{7 * 32:064x}",
