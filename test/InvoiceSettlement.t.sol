@@ -304,7 +304,7 @@ contract InvoiceSettlementTest {
         vm.prank(AGENT);
         settlement.settle(INVOICE_ID, 2_000, 0, uint64(block.timestamp + 1 hours));
 
-        vm.warp(uint256(mandateExpiry) + 1);
+        vm.warp(uint256(dueAt) + 1);
         vm.prank(PAYER);
         settlement.cancelExpiredInvoice(INVOICE_ID);
 
@@ -314,6 +314,21 @@ contract InvoiceSettlementTest {
         require(token.balanceOf(PAYER) == 8_000, "unused escrow not refunded");
         require(token.balanceOf(BENEFICIARY) == 2_000, "beneficiary payment changed");
         require(token.balanceOf(address(settlement)) == 0, "escrow should be empty");
+    }
+
+
+    function testCannotRefundBeforeInvoiceDueDateEvenAfterMandateExpiry() public {
+        vm.warp(uint256(mandateExpiry) + 1);
+        vm.expectRevert(InvoiceSettlement.InvalidDeadline.selector);
+        vm.prank(PAYER);
+        settlement.cancelExpiredInvoice(INVOICE_ID);
+    }
+
+    function testMandateExpiryCannotBeExtendedIndefinitely() public {
+        uint64 farExpiry = type(uint64).max;
+        vm.expectRevert(InvoiceSettlement.InvalidDeadline.selector);
+        vm.prank(PAYER);
+        settlement.authorizeAgent(INVOICE_ID, address(0xBEEF), 1_000, 2_000, farExpiry);
     }
 
     function testCannotCancelBeforeLatestMandateExpiry() public {
