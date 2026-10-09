@@ -381,4 +381,23 @@ contract InvoiceSettlementTest {
         settlement.setDisputeResolver(address(0));
     }
 
+
+    function testFuzzAggregateLimitRejectsAdditionalPayment(uint128 fuzzedAmount) public {
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 2_000, 0, uint64(block.timestamp + 1 hours));
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, 2_000, 1, uint64(block.timestamp + 1 hours));
+
+        uint128 amount = 1_001 + uint128(uint256(fuzzedAmount) % 1_000);
+        vm.expectRevert(InvoiceSettlement.AgentLimitExceeded.selector);
+        vm.prank(AGENT);
+        settlement.settle(INVOICE_ID, amount, 2, uint64(block.timestamp + 1 hours));
+
+        InvoiceSettlement.Invoice memory inv = settlement.getInvoice(INVOICE_ID);
+        InvoiceSettlement.Mandate memory mandate = settlement.getMandate(INVOICE_ID, AGENT);
+        require(inv.paid == 4_000, "rejected payment changed paid amount");
+        require(mandate.spent == 4_000 && mandate.nonce == 2, "rejected payment changed mandate");
+        require(token.balanceOf(BENEFICIARY) == 4_000, "rejected payment transferred tokens");
+    }
+
 }
