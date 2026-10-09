@@ -54,7 +54,7 @@
 
   <div class="grid">
     <section class="panel">
-      <h2>Invoice INV-1001</h2>
+      <h2 id="invoiceHeading">Invoice INV-1001</h2>
       <div class="metric"><span>Face value</span><strong>10,000 dUSD</strong></div>
       <div class="metric"><span>Settlement state</span><strong id="invoiceState">Not loaded</strong></div>
       <div class="metric"><span>Escrow funded</span><strong id="funded">Not loaded</strong></div>
@@ -114,6 +114,7 @@
 (() => {
   const cfg = window.RWA_AGENT_GUARDIAN_CONFIG || window.AEGIS_CONFIG;
   let activeInvoiceId = cfg?.invoiceId;
+  try { activeInvoiceId = localStorage.getItem("rwa-agent-guardian-invoice-id") || activeInvoiceId; } catch (_) { /* private browsing may disable storage */ }
   const $ = (id) => document.getElementById(id);
   const states = ["NONE", "REGISTERED", "ACCEPTED", "DISPUTED", "SETTLED", "CANCELLED", "CLAIMED"];
   const tokenAbi = [
@@ -320,6 +321,7 @@
     }
     const now = BigInt(Math.floor(Date.now() / 1000));
     const invoiceStatus = Number(inv.status);
+    $("invoiceHeading").textContent = "Invoice " + activeInvoiceId.slice(0, 10) + "…";
     const invoiceLabel = states[invoiceStatus] || String(inv.status);
     const limitReached = mandate.active && mandate.spent >= mandate.totalLimit;
     const mandateStatus = !mandate.active ? "Revoked" :
@@ -418,6 +420,7 @@
       const receipt = await txResponse.wait();
       if (!receipt || receipt.status !== 1) throw new Error("Invoice registration transaction failed.");
       activeInvoiceId = newId;
+      try { localStorage.setItem("rwa-agent-guardian-invoice-id", activeInvoiceId); } catch (_) { /* keep current-session state */ }
       note("New invoice registered: " + newId + ". Reconnect as the payer to accept, fund, and authorize the executor.", "good");
       await refresh();
     } catch (error) {
