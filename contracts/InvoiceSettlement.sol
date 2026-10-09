@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 interface IERC20Settlement {
+    function balanceOf(address account) external view returns (uint256);
     function transfer(address to, uint256 amount) external returns (bool);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
@@ -150,10 +151,8 @@ contract InvoiceSettlement {
         if (inv.status != Status.ACCEPTED) revert WrongStatus();
         if (amount == 0 || uint256(inv.funded) + amount > inv.faceValue) revert InvalidAmount();
 
+        _transferFromExact(inv.token, msg.sender, address(this), amount);
         inv.funded += amount;
-        if (!IERC20Settlement(inv.token).transferFrom(msg.sender, address(this), amount)) {
-            revert TransferFailed();
-        }
         emit InvoiceFunded(invoiceId, amount, inv.funded);
     }
 
@@ -219,9 +218,7 @@ contract InvoiceSettlement {
 
         inv.status = Status.CANCELLED;
         uint256 refund = uint256(inv.funded) - inv.paid;
-        if (refund > 0 && !IERC20Settlement(inv.token).transfer(inv.payer, refund)) {
-            revert TransferFailed();
-        }
+        if (refund > 0) _transferExact(inv.token, inv.payer, refund);
         if (refund > 0) emit InvoiceRefunded(invoiceId, inv.payer, refund);
         emit InvoiceCancelled(invoiceId, inv.payer, refund);
     }
@@ -236,9 +233,7 @@ contract InvoiceSettlement {
         } else {
             inv.status = Status.CANCELLED;
             uint256 refund = uint256(inv.funded) - inv.paid;
-            if (refund > 0 && !IERC20Settlement(inv.token).transfer(inv.payer, refund)) {
-                revert TransferFailed();
-            }
+            if (refund > 0) _transferExact(inv.token, inv.payer, refund);
             if (refund > 0) emit InvoiceRefunded(invoiceId, inv.payer, refund);
         }
         emit DisputeResolved(invoiceId, resume);
@@ -265,9 +260,7 @@ contract InvoiceSettlement {
         inv.paid += amount;
         if (inv.paid == inv.faceValue) inv.status = Status.SETTLED;
 
-        if (!IERC20Settlement(inv.token).transfer(inv.beneficiary, amount)) {
-            revert TransferFailed();
-        }
+        _transferExact(inv.token, inv.beneficiary, amount);
         emit SettlementExecuted(invoiceId, msg.sender, inv.beneficiary, amount, inv.paid, usedNonce);
     }
 
@@ -277,6 +270,32 @@ contract InvoiceSettlement {
 
     function getMandate(bytes32 invoiceId, address agent) external view returns (Mandate memory) {
         return mandates[invoiceId][agent];
+    }
+
+    function _transferFromExact(address token, address from, address to, uint256 amount) private {
+        IERC20Settlement asset = IERC20Settlement(token);
+        uint256 senderBefore = asset.balanceOf(from);
+        uint256 recipientBefore = asset.balanceOf(to);
+        if (!asset.transferFrom(from, to, amount)) revert TransferFailed();
+        uint256 senderAfter = asset.balanceOf(from);
+        uint256 recipientAfter = asset.balanceOf(to);
+        if (
+            senderAfter > senderBefore || senderBefore - senderAfter != amount || recipientAfter < recipientBefore
+                || recipientAfter - recipientBefore != amount
+        ) revert TransferFailed();
+    }
+
+    function _transferExact(address token, address to, uint256 amount) private {
+        IERC20Settlement asset = IERC20Settlement(token);
+        uint256 senderBefore = asset.balanceOf(address(this));
+        uint256 recipientBefore = asset.balanceOf(to);
+        if (!asset.transfer(to, amount)) revert TransferFailed();
+        uint256 senderAfter = asset.balanceOf(address(this));
+        uint256 recipientAfter = asset.balanceOf(to);
+        if (
+            senderAfter > senderBefore || senderBefore - senderAfter != amount || recipientAfter < recipientBefore
+                || recipientAfter - recipientBefore != amount
+        ) revert TransferFailed();
     }
 
     function _invoice(bytes32 invoiceId) private view returns (Invoice storage inv) {
