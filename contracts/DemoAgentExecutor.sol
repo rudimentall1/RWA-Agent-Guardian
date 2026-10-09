@@ -108,14 +108,9 @@ contract DemoAgentExecutor {
 
     function _recoverSigner(bytes32 digest, bytes calldata signature) private pure returns (address signer) {
         if (signature.length != 65) return address(0);
-        bytes32 r;
-        bytes32 sigS;
-        uint8 v;
-        assembly {
-            r := calldataload(signature.offset)
-            sigS := calldataload(add(signature.offset, 32))
-            v := byte(0, calldataload(add(signature.offset, 64)))
-        }
+        bytes32 r = bytes32(signature[0:32]);
+        bytes32 sigS = bytes32(signature[32:64]);
+        uint8 v = uint8(signature[64]);
         if (uint256(sigS) > SECP256K1N_HALF || (v != 27 && v != 28)) return address(0);
         signer = ecrecover(digest, v, r, sigS);
     }
