@@ -1,4 +1,4 @@
-# RWA-Agent-Guardian — demo evidence (2026-10-09)
+# RWA-Agent-Guardian - demo evidence (2026-10-09)
 
 This note records the currently configured Sepolia demo and the contract state read directly from the RPC. It describes a testnet prototype, not an audit or a claim about real-world assets.
 
@@ -26,7 +26,7 @@ At the time of this check:
 - Executor mandate: active; per-payment cap `2,000 dUSD`; aggregate cap `5,000 dUSD`; spent `5,000 dUSD`.
 - The public demo configuration matches the contract addresses above.
 
-These are current contract-state reads, not a substitute for inspecting individual transaction receipts. The expected scenario is: preflight `2,000 dUSD` → ALLOW; preflight `3,000 dUSD` → BLOCK; execute permitted settlements up to the `5,000 dUSD` aggregate cap; then a further attempt → BLOCK.
+These are current contract-state reads, not a substitute for inspecting individual transaction receipts. The expected scenario is: preflight `2,000 dUSD` to ALLOW; preflight `3,000 dUSD` to BLOCK; execute permitted settlements up to the `5,000 dUSD` aggregate cap; then a further attempt to BLOCK.
 
 ## Known transaction records for the current deployment
 

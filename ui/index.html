@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RWA Agent Guardian — Invoice Settlement</title>
+  <title>RWA Agent Guardian - Invoice Settlement</title>
   <style>
     :root { color-scheme: dark; --bg:#0b1020; --panel:#141b2e; --line:#2c3650; --text:#eef2ff; --muted:#9eabc7; --blue:#91b9ff; --red:#ff8e9a; --green:#7be3b0; }
     * { box-sizing:border-box; }
@@ -55,18 +55,18 @@
     <section class="panel">
       <h2>Invoice INV-1001</h2>
       <div class="metric"><span>Face value</span><strong>10,000 dUSD</strong></div>
-      <div class="metric"><span>Settlement state</span><strong id="invoiceState">—</strong></div>
-      <div class="metric"><span>Escrow funded</span><strong id="funded">—</strong></div>
-      <div class="metric"><span>Already paid</span><strong id="paid">—</strong></div>
-      <div class="metric"><span>Token balance</span><strong id="balance">—</strong></div>
+      <div class="metric"><span>Settlement state</span><strong id="invoiceState">Not loaded</strong></div>
+      <div class="metric"><span>Escrow funded</span><strong id="funded">Not loaded</strong></div>
+      <div class="metric"><span>Already paid</span><strong id="paid">Not loaded</strong></div>
+      <div class="metric"><span>Token balance</span><strong id="balance">Not loaded</strong></div>
       <div class="row"><button id="refresh">Refresh state</button></div>
     </section>
 
     <section class="panel">
       <h2>Addresses</h2>
-      <div class="metric"><span>Connected payer</span><strong id="payer">—</strong></div>
-      <div class="metric"><span>Beneficiary</span><strong id="beneficiary">—</strong></div>
-      <div class="metric"><span>Agent executor</span><strong id="executor">—</strong></div>
+      <div class="metric"><span>Connected payer</span><strong id="payer">Not loaded</strong></div>
+      <div class="metric"><span>Beneficiary</span><strong id="beneficiary">Not loaded</strong></div>
+      <div class="metric"><span>Agent executor</span><strong id="executor">Not loaded</strong></div>
       <div class="metric"><span>Network</span><strong id="network">Sepolia · 11155111</strong></div>
     </section>
 
@@ -153,12 +153,12 @@
   async function tx(label, action) {
     try {
       await connected();
-      note(label + " — waiting for wallet confirmation…");
+      note(label + " : waiting for wallet confirmation…");
       const response = await action();
-      note(label + " — transaction submitted: " + response.hash);
+      note(label + " : transaction submitted: " + response.hash);
       const receipt = await response.wait();
       if (receipt.status !== 1) throw new Error("Transaction reverted.");
-      note(label + " — confirmed in block " + receipt.blockNumber, "good");
+      note(label + " : confirmed in block " + receipt.blockNumber, "good");
       await refresh();
       return receipt;
     } catch (error) {
@@ -227,11 +227,11 @@
     try {
       await executor.execute.staticCall(cfg.invoiceId, rawAmount, mandate.nonce, deadline);
       lastCheckedAmount = rawAmount;
-      decision("ALLOW — action passes the current onchain mandate. No transaction has been sent yet.", "good");
+      decision("ALLOW : action passes the current onchain mandate. No transaction has been sent yet.", "good");
       return { rawAmount, nonce: mandate.nonce, deadline };
     } catch (error) {
       lastCheckedAmount = null;
-      decision("BLOCK — onchain simulation rejected the request. Wallet signing was not requested. " +
+      decision("BLOCK : onchain simulation rejected the request. Wallet signing was not requested. " +
         (error.revert?.name || error.reason || error.shortMessage || "Policy check failed."), "bad");
       throw error;
     }
