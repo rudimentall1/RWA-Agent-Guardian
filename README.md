@@ -1,6 +1,6 @@
 # RWA Agent Guardian
 
-**Escrow settlement for agent-operated invoice payments.**
+**Invoice escrow with onchain mandate enforcement.**
 
 The prototype models a narrow, testable trade-finance flow: an issuer registers an invoice record, the payer accepts it, funds are deposited into escrow, and a payer-authorized executor contract can make capped partial payments to the named beneficiary. There is no separately running AI agent or LLM in this version.
 
