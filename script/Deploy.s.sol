@@ -24,7 +24,7 @@ contract Deploy {
 
         uint128 faceValue = 10_000 * 10 ** 6;
         bytes32 invoiceId = keccak256("INV-1001");
-        bytes32 termsHash = keccak256("INV-1001|Synthetic invoice|10000 dUSD|NET30|v1");
+        bytes32 documentHash = keccak256("INV-1001|Synthetic invoice|10000 dUSD|NET30|v1");
         uint64 dueAt = uint64(block.timestamp + 30 days);
 
         vm.startBroadcast(privateKey);
@@ -32,7 +32,7 @@ contract Deploy {
         InvoiceSettlement settlement = new InvoiceSettlement(deployer);
         DemoAgentExecutor executor = new DemoAgentExecutor(address(settlement), payer);
 
-        settlement.registerInvoice(invoiceId, payer, beneficiary, address(token), faceValue, dueAt, termsHash);
+        settlement.registerInvoice(invoiceId, payer, beneficiary, address(token), faceValue, dueAt, documentHash);
         token.mint(payer, faceValue);
         vm.stopBroadcast();
 
