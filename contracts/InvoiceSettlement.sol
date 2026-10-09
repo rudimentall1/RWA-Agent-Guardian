@@ -43,6 +43,7 @@ contract InvoiceSettlement {
     address public disputeResolver;
     address public immutable disputeResolverAdmin;
     bytes32 public constant INVOICE_TERMS_DOMAIN = keccak256("RWA_AGENT_GUARDIAN_INVOICE_V1");
+    uint64 public constant MAX_MANDATE_EXTENSION = 30 days;
     mapping(bytes32 => Invoice) public invoices;
     mapping(bytes32 => bytes32) public invoiceDocumentHashes;
     mapping(bytes32 => mapping(address => Mandate)) public mandates;
@@ -216,7 +217,9 @@ contract InvoiceSettlement {
             agent == address(0) || agent == inv.payer || perPaymentLimit == 0 || totalLimit < perPaymentLimit
                 || totalLimit > inv.faceValue
         ) revert InvalidAgent();
-        if (expiresAt <= block.timestamp) revert InvalidDeadline();
+        if (expiresAt <= block.timestamp || uint256(expiresAt) > uint256(inv.dueAt) + MAX_MANDATE_EXTENSION) {
+            revert InvalidDeadline();
+        }
 
         Mandate storage m = mandates[invoiceId][agent];
         if (totalLimit < m.spent) revert AgentLimitExceeded();
@@ -254,6 +257,8 @@ contract InvoiceSettlement {
         Invoice storage inv = _invoice(invoiceId);
         if (msg.sender != inv.payer) revert Unauthorized();
         if (inv.status != Status.ACCEPTED) revert WrongStatus();
+
+        if (block.timestamp < inv.dueAt) revert InvalidDeadline();
 
         uint64 latestExpiry = latestMandateExpiry[invoiceId];
         if (latestExpiry == 0) {
