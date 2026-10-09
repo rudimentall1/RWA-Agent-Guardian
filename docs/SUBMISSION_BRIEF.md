@@ -16,7 +16,7 @@ A payment agent should not be able to spend an arbitrary amount just because it 
 - Invoice registration and payer acceptance.
 - Prefunded escrow settlement with partial payments.
 - Per-payment and aggregate mandate caps, expiry, nonce checks, and revocation.
-- Dispute freeze, resolver-controlled resolution, and a seven-day timeout that reopens an unresolved invoice.
+- Dispute freeze, resolver-controlled resolution, and a seven-day timeout that escalates an unresolved invoice while keeping settlement frozen until the resolver acts.
 - A payer refund path within the maturity grace window and a beneficiary claim for remaining funded escrow after the due date plus 30 days and expiry of the latest mandate.
 - Exact token balance-delta checks and a canonical invoice commitment binding issuer, invoice ID, payer, beneficiary, token, face value, due date, and document hash.
 - A deterministic off-chain runner in `scripts/agent_runner.py` that executes only within on-chain mandate authority.
