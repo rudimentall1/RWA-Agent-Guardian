@@ -46,8 +46,12 @@ def main() -> int:
     parser.add_argument("--model", default="qwen2.5:3b")
     parser.add_argument("--url", default="http://127.0.0.1:11434/api/chat")
     parser.add_argument("--timeout", type=int, default=300)
+    parser.add_argument("--repeats", type=int, default=1, help="Independent inference attempts per scenario (minimum 1)")
     parser.add_argument("--output", default="artifacts/ai-benchmark-latest.json")
     args = parser.parse_args()
+
+    if args.repeats < 1:
+        parser.error("--repeats must be at least 1")
 
     now = 1_900_000_000
     cases = [
@@ -58,31 +62,33 @@ def main() -> int:
     ]
     results = []
     for case in cases:
-        started = time.monotonic()
-        row = {
-            "scenario": case["name"],
-            "expected": case["expected"],
-            "model": args.model,
-            "startedAt": datetime.now(timezone.utc).isoformat(),
-        }
-        try:
-            proposal = ask_ollama(
-                case["context"], case["context"]["maxAllowedAmount"], args.model, args.url,
-                timeout_seconds=args.timeout,
-            )
-            row["proposal"] = proposal
+        for attempt in range(1, args.repeats + 1):
+            started = time.monotonic()
+            row = {
+                "scenario": case["name"],
+                "attempt": attempt,
+                "expected": case["expected"],
+                "model": args.model,
+                "startedAt": datetime.now(timezone.utc).isoformat(),
+            }
             try:
-                row["canonicalReason"] = canonical_decision_reason(case["context"], proposal)
-                row["gate"] = "PASS"
-            except SystemExit as exc:
+                proposal = ask_ollama(
+                    case["context"], case["context"]["maxAllowedAmount"], args.model, args.url,
+                    timeout_seconds=args.timeout,
+                )
+                row["proposal"] = proposal
+                try:
+                    row["canonicalReason"] = canonical_decision_reason(case["context"], proposal)
+                    row["gate"] = "PASS"
+                except SystemExit as exc:
+                    row["gate"] = "BLOCK"
+                    row["gateError"] = str(exc)
+            except Exception as exc:
                 row["gate"] = "BLOCK"
-                row["gateError"] = str(exc)
-        except Exception as exc:
-            row["gate"] = "BLOCK"
-            row["inferenceError"] = f"{type(exc).__name__}: {exc}"
-        row["durationSeconds"] = round(time.monotonic() - started, 3)
-        results.append(row)
-        print(json.dumps(row, ensure_ascii=False), flush=True)
+                row["inferenceError"] = f"{type(exc).__name__}: {exc}"
+            row["durationSeconds"] = round(time.monotonic() - started, 3)
+            results.append(row)
+            print(json.dumps(row, ensure_ascii=False), flush=True)
 
     passed = sum(row["gate"] == "PASS" for row in results)
     summary = {
@@ -91,6 +97,8 @@ def main() -> int:
         "model": args.model,
         "inferenceUrl": args.url,
         "transactionsSent": 0,
+        "scenarios": len(cases),
+        "repeatsPerScenario": args.repeats,
         "cases": len(results),
         "gatePasses": passed,
         "gateBlocks": len(results) - passed,
@@ -105,7 +113,7 @@ def main() -> int:
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"Summary written to {output}; gate PASS {passed}/{len(results)}; transactions sent: 0")
+    print(f"Summary written to {output}; gate PASS {passed}/{len(results)} attempts; transactions sent: 0")
     return 0
 
 
