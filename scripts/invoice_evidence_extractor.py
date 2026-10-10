@@ -52,6 +52,36 @@ SYSTEM_PROMPT = (
 )
 
 
+def validate_claims(claims: object) -> dict:
+    """Validate model output defensively; JSON mode is not a trust boundary."""
+    if not isinstance(claims, dict) or set(claims) != set(SCHEMA["required"]):
+        raise RuntimeError("Local AI output does not match the required invoice-claim fields")
+
+    scalar_fields = (
+        "invoice_number", "issuer_name", "debtor_name", "currency", "total_amount_text",
+        "issue_date", "due_date", "payment_terms_text",
+    )
+    for field in scalar_fields:
+        value = claims[field]
+        if value is not None and not isinstance(value, str):
+            raise RuntimeError(f"Local AI returned invalid type for {field}")
+
+    line_item_fields = {"description", "quantity_text", "unit_price_text", "line_total_text"}
+    if not isinstance(claims["line_items"], list):
+        raise RuntimeError("Local AI returned invalid line_items")
+    for index, item in enumerate(claims["line_items"]):
+        if not isinstance(item, dict) or set(item) != line_item_fields:
+            raise RuntimeError(f"Local AI returned invalid line_items[{index}] fields")
+        if any(value is not None and not isinstance(value, str) for value in item.values()):
+            raise RuntimeError(f"Local AI returned invalid line_items[{index}] value type")
+
+    if not isinstance(claims["uncertainties"], list) or any(
+        not isinstance(item, str) for item in claims["uncertainties"]
+    ):
+        raise RuntimeError("Local AI returned invalid uncertainties")
+    return claims
+
+
 def extract_claims(source_text: str, model: str, url: str, timeout_seconds: float = 120) -> dict:
     if not source_text.strip():
         raise ValueError("Source text is empty")
@@ -82,11 +112,7 @@ def extract_claims(source_text: str, model: str, url: str, timeout_seconds: floa
         claims = json.loads(content)
     except json.JSONDecodeError as exc:
         raise RuntimeError("Local AI returned invalid JSON") from exc
-    if not isinstance(claims, dict) or set(claims) != set(SCHEMA["required"]):
-        raise RuntimeError("Local AI output does not match the required invoice-claim fields")
-    if not isinstance(claims["line_items"], list) or not isinstance(claims["uncertainties"], list):
-        raise RuntimeError("Local AI returned invalid line_items or uncertainties")
-    return claims
+    return validate_claims(claims)
 
 
 def main() -> int:
