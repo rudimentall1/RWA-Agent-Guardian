@@ -137,6 +137,20 @@ def validate_runtime_config(config, rpc, agent_address, require_signed_intent=Fa
 
     if require_signed_intent:
         try:
+            settlement_version = cast(
+                "call", config["settlement"], "SETTLEMENT_VERSION()(uint256)", "--rpc-url", rpc
+            )
+        except subprocess.CalledProcessError as exc:
+            raise SystemExit(
+                "Configured settlement is legacy and does not expose SETTLEMENT_VERSION=2. "
+                "Deploy the current InvoiceSettlement before running AI mode; no transaction sent."
+            ) from exc
+        if settlement_version.strip() != "2":
+            raise SystemExit(
+                f"Configured settlement version is {settlement_version.strip()}, expected 2; no transaction sent"
+            )
+
+        try:
             domain = cast("call", executor, "intentDomainSeparator()(bytes32)", "--rpc-url", rpc)
         except subprocess.CalledProcessError as exc:
             raise SystemExit(
