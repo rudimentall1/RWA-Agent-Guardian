@@ -17,5 +17,12 @@
     return typeof errorName === "string" && POLICY_REJECTIONS.has(errorName);
   }
 
-  return Object.freeze({ isPolicyRejection });
+  function isUnsupportedReadError(error) {
+    if (!error || typeof error !== "object" || error.code !== "BAD_DATA") return false;
+    const data = error.data ?? error.value ?? error.info?.error?.data;
+    const message = String(error.shortMessage ?? error.message ?? "").toLowerCase();
+    return data === "0x" || message.includes("could not decode result data");
+  }
+
+  return Object.freeze({ isPolicyRejection, isUnsupportedReadError });
 });
