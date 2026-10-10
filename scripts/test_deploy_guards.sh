@@ -24,6 +24,8 @@ elif [[ "$1" == "rpc" && "$*" == *"eth_gasPrice"* ]]; then
   echo "0x3b9aca00"
 elif [[ "$1" == "rpc" && "$*" == *"eth_maxPriorityFeePerGas"* ]]; then
   echo "0x3b9aca00"
+elif [[ "$1" == "block" && "$*" == *"latest"* ]]; then
+  echo '{"baseFeePerGas":"0x0"}'
 elif [[ "$1" == "code" ]]; then
   echo "0x60006000"
 elif [[ "$1" == "call" && "$*" == *"owner()(address)"* ]]; then
