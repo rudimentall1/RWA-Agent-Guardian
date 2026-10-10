@@ -17,6 +17,7 @@ from agent_runner import (
     POLICY_VERSION,
     build_intent_typed_data,
     canonical_decision_reason,
+    DECISION_REASON_CODES,
     canonical_json,
     cast,
     keccak_text,
@@ -70,12 +71,19 @@ def validate_evidence(evidence, config):
     maximum = context.get("maxAllowedAmount")
     if type(maximum) is not int or maximum < 0:
         raise SystemExit("Evidence context has an invalid policy maximum")
-    checked_decision = parse_ai_decision(json.dumps(decision), maximum)
-    model_reason = evidence.get("modelReason")
-    if not isinstance(model_reason, str) or not model_reason.strip() or len(model_reason) > 160:
-        raise SystemExit("Evidence is missing the original model reason")
+    model_reason_code = evidence.get("modelReasonCode")
+    if not isinstance(model_reason_code, str) or model_reason_code not in DECISION_REASON_CODES:
+        raise SystemExit("Evidence is missing a valid model reason code")
+    checked_decision = parse_ai_decision(
+        json.dumps({
+            "decision": decision.get("decision"),
+            "amount": decision.get("amount"),
+            "reason": model_reason_code,
+        }),
+        maximum,
+    )
     expected_reason = canonical_decision_reason(context, checked_decision)
-    if checked_decision["reason"] != expected_reason:
+    if decision.get("reason") != expected_reason:
         raise SystemExit("Decision reason does not match the checked policy facts")
 
     context_hash = keccak_text(canonical_json(context))
@@ -90,8 +98,8 @@ def validate_evidence(evidence, config):
         "contextHash": context_hash,
         "decision": checked_decision["decision"],
         "amount": checked_decision["amount"],
-        "reason": checked_decision["reason"],
-        "modelReason": model_reason,
+        "reason": expected_reason,
+        "modelReasonCode": model_reason_code,
     }
     if decision_record != expected_record:
         raise SystemExit("Signed decision record does not match the recorded model decision")
