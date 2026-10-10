@@ -498,7 +498,7 @@ def main():
     mode = env("AGENT_DECISION_MODE", "ollama").strip().lower()
     if mode not in ("ollama", "deterministic"):
         raise SystemExit("AGENT_DECISION_MODE must be 'ollama' or 'deterministic'; no transaction sent")
-    dry_run = env_bool("AGENT_DRY_RUN", default=False)
+    dry_run = env_bool("AGENT_DRY_RUN", default=True)
     if dry_run and mode != "ollama":
         raise SystemExit("AGENT_DRY_RUN requires AGENT_DECISION_MODE=ollama; no transaction sent")
     rpc = env("SEPOLIA_RPC_URL", "https://ethereum-sepolia-rpc.publicnode.com")
