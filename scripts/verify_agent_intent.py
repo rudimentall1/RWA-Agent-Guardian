@@ -232,6 +232,16 @@ def main():
         raise SystemExit("Could not read RPC chain ID") from exc
     if chain_id != config["chainId"]:
         raise SystemExit("RPC chain ID does not match the trusted deployment config")
+    try:
+        settlement_version = cast(
+            "call", config["settlement"], "SETTLEMENT_VERSION()(uint256)", "--rpc-url", rpc
+        )
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit("Configured settlement is legacy and has no version-2 dispute hardening") from exc
+    if settlement_version.strip() != "2":
+        raise SystemExit(
+            f"Configured settlement version is {settlement_version.strip()}, expected 2"
+        )
     executor = config["agentExecutor"]
     code = cast("code", executor, "--rpc-url", rpc)
     if not code or code.strip().lower() == "0x":
