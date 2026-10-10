@@ -90,7 +90,7 @@ The earlier deployment shown in the recorded payment sequence has reached its 5,
 
 - Invoice and token are synthetic. The document hash is not proof of ownership, delivery, enforceability, or collectible value. This repository does not include an ERC-721 claim token or a transfer of legal title.
 - At timeout, an unresolved DISPUTED invoice moves to ESCALATED and remains frozen until the dispute resolver explicitly resumes execution or cancels and refunds the invoice.
-- The earlier Sepolia instance used for the recorded three-payment sequence is separate from the later instance configured in the UI. They have different state and transaction histories. The current UI deployment corresponds to the current contract source; see [deployment evidence](docs/demo-evidence-2026-10-09.md).
+- The earlier Sepolia instance used for the recorded three-payment sequence is separate from the later instance configured in the UI. They have different state and transaction histories. Both public instances are legacy relative to the current source: the UI settlement lacks the `ESCALATED` dispute transition, and its executor lacks the signed-intent interface. The fixes are not live until fresh contracts are deployed. See [deployment evidence](docs/demo-evidence-2026-10-09.md).
 - No independent audit has been performed. Do not use this prototype to hold real assets.
 
 The fuller version is available in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
