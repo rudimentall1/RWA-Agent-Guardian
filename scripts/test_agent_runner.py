@@ -27,9 +27,9 @@ class AgentEnvironmentTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "must be a boolean"):
                 env_bool("AGENT_DRY_RUN")
 
-    def test_dry_run_defaults_to_false(self):
+    def test_dry_run_defaults_to_safe_true(self):
         with patch.dict(os.environ, {}, clear=True):
-            self.assertFalse(env_bool("AGENT_DRY_RUN"))
+            self.assertTrue(env_bool("AGENT_DRY_RUN"))
 
 
 class AgentRunnerDecodeTests(unittest.TestCase):
