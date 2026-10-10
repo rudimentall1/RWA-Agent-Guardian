@@ -6,11 +6,30 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 from agent_runner import (
-    DECISION_REASON_CODES, ask_ollama, build_intent_typed_data,
+    DECISION_REASON_CODES, ask_ollama, build_intent_typed_data, env_bool,
     canonical_decision_reason, compact_model_context, decode_words,
     extract_transaction_hash, load_agent_private_key, parse_ai_decision,
     validate_config_shape, validate_runtime_config, validate_successful_receipt,
 )
+
+
+class AgentEnvironmentTests(unittest.TestCase):
+    def test_dry_run_boolean_accepts_explicit_true_and_false_values(self):
+        for value in ("1", "true", "YES", "on"):
+            with self.subTest(value=value), patch.dict(os.environ, {"AGENT_DRY_RUN": value}):
+                self.assertTrue(env_bool("AGENT_DRY_RUN"))
+        for value in ("0", "false", "NO", "off"):
+            with self.subTest(value=value), patch.dict(os.environ, {"AGENT_DRY_RUN": value}):
+                self.assertFalse(env_bool("AGENT_DRY_RUN"))
+
+    def test_dry_run_boolean_rejects_ambiguous_values(self):
+        with patch.dict(os.environ, {"AGENT_DRY_RUN": "sometimes"}):
+            with self.assertRaisesRegex(SystemExit, "must be a boolean"):
+                env_bool("AGENT_DRY_RUN")
+
+    def test_dry_run_defaults_to_false(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(env_bool("AGENT_DRY_RUN"))
 
 
 class AgentRunnerDecodeTests(unittest.TestCase):
