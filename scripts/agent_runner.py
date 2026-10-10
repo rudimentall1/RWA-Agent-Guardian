@@ -50,6 +50,19 @@ def env(name, default=None):
     return value
 
 
+def env_bool(name, default=False):
+    """Parse an explicit boolean environment flag; reject ambiguous values."""
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    normalized = value.strip().lower()
+    if normalized in ("1", "true", "yes", "on"):
+        return True
+    if normalized in ("0", "false", "no", "off"):
+        return False
+    raise SystemExit(f"{name} must be a boolean (true/false); no transaction sent")
+
+
 def cast(*args, json_output=False):
     cmd = ["cast", *args]
     if json_output:
@@ -485,6 +498,9 @@ def main():
     mode = env("AGENT_DECISION_MODE", "ollama").strip().lower()
     if mode not in ("ollama", "deterministic"):
         raise SystemExit("AGENT_DECISION_MODE must be 'ollama' or 'deterministic'; no transaction sent")
+    dry_run = env_bool("AGENT_DRY_RUN", default=False)
+    if dry_run and mode != "ollama":
+        raise SystemExit("AGENT_DRY_RUN requires AGENT_DECISION_MODE=ollama; no transaction sent")
     rpc = env("SEPOLIA_RPC_URL", "https://ethereum-sepolia-rpc.publicnode.com")
     private_key = load_agent_private_key()
     executor = config["agentExecutor"]
@@ -690,6 +706,12 @@ def main():
                 flush=True,
             )
             print(f"Signed intent evidence: {evidence_path}", flush=True)
+
+            # Dry-run still performs live reads, model inference, signing, and on-chain
+            # signature verification, but deliberately stops before cast send.
+            if dry_run:
+                print("DRY RUN: decision and signed intent verified; no transaction sent.", flush=True)
+                return
 
             if decision["decision"] != "ALLOW":
                 evidence["status"] = "SIGNED_NOT_EXECUTED"
