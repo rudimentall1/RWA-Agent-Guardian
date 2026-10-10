@@ -38,8 +38,9 @@ class VerifyAgentIntentTests(unittest.TestCase):
         self.decision = {
             "decision": "ALLOW",
             "amount": 1000,
-            "reason": "Funded escrow and active mandate permit a partial payment",
+            "reason": "Within current on-chain caps",
         }
+        self.model_reason = "exceed max allowed amount"
         self.context_hash = "0x" + "b" * 64
         self.decision_hash = "0x" + "c" * 64
         self.decision_record = {
@@ -51,6 +52,7 @@ class VerifyAgentIntentTests(unittest.TestCase):
             "decision": self.decision["decision"],
             "amount": self.decision["amount"],
             "reason": self.decision["reason"],
+            "modelReason": self.model_reason,
         }
         self.signature = "0x" + "1" * 130
         self.typed_data = build_intent_typed_data(
@@ -72,6 +74,7 @@ class VerifyAgentIntentTests(unittest.TestCase):
             "context": self.context,
             "contextHash": self.context_hash,
             "decision": self.decision,
+            "modelReason": self.model_reason,
             "decisionRecord": self.decision_record,
             "decisionHash": self.decision_hash,
             "intentDeadline": self.intent_deadline,
@@ -111,6 +114,26 @@ class VerifyAgentIntentTests(unittest.TestCase):
         self.assertEqual(checked["decision"]["amount"], 1000)
         self.assertEqual(checked["signer"], self.config["agentOwner"])
         self.assertEqual(checked["decisionHash"], self.decision_hash)
+
+    def test_verifier_rejects_noncanonical_decision_reason(self):
+        evidence = json.loads(json.dumps(self.evidence))
+        evidence["decision"]["reason"] = "exceed max allowed amount"
+        with patch(
+            "verify_agent_intent.keccak_text",
+            side_effect=[self.context_hash, self.decision_hash],
+        ):
+            with self.assertRaisesRegex(SystemExit, "does not match the checked policy facts"):
+                validate_evidence(evidence, self.config)
+
+    def test_verifier_binds_raw_model_reason_into_decision_hash(self):
+        evidence = json.loads(json.dumps(self.evidence))
+        evidence["modelReason"] = "different raw model output"
+        with patch(
+            "verify_agent_intent.keccak_text",
+            side_effect=[self.context_hash, self.decision_hash],
+        ):
+            with self.assertRaisesRegex(SystemExit, "does not match the recorded model decision"):
+                validate_evidence(evidence, self.config)
 
     def test_tampered_context_is_rejected_before_signature_check(self):
         evidence = json.loads(json.dumps(self.evidence))
