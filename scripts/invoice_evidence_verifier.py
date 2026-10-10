@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,7 +31,7 @@ def verify(extraction: dict, evidence: dict) -> dict:
     if extraction.get("schema") != "rwa-invoice-claims/v1":
         errors.append("unsupported_extraction_schema")
     source_hash = extraction.get("source", {}).get("sha256")
-    if not isinstance(source_hash, str) or len(source_hash) != 64:
+    if not isinstance(source_hash, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", source_hash):
         errors.append("missing_or_invalid_source_sha256")
     missing = [key for key in REQUIRED_EVIDENCE if key not in evidence or evidence[key] is None]
     comparisons = []
@@ -47,13 +48,16 @@ def verify(extraction: dict, evidence: dict) -> dict:
                 "claim": claim,
                 "independentEvidence": independent,
             })
-    if evidence.get("accepted") is not True:
+    # Missing assertions are INCOMPLETE; explicit negative assertions are MISMATCH.
+    # Never let an absent field masquerade as a confirmed negative or a pass.
+    if "accepted" in evidence and evidence.get("accepted") is not True:
         errors.append("debtor_acceptance_not_confirmed")
-    if isinstance(source_hash, str) and evidence.get("accepted_invoice_sha256") != source_hash:
+    accepted_hash = evidence.get("accepted_invoice_sha256")
+    if accepted_hash is not None and isinstance(source_hash, str) and accepted_hash != source_hash:
         errors.append("acceptance_not_bound_to_exact_source_hash")
-    if evidence.get("duplicate_check_clear") is not True:
+    if "duplicate_check_clear" in evidence and evidence.get("duplicate_check_clear") is not True:
         errors.append("duplicate_financing_check_not_clear")
-    if evidence.get("encumbrance_check_clear") is not True:
+    if "encumbrance_check_clear" in evidence and evidence.get("encumbrance_check_clear") is not True:
         errors.append("encumbrance_check_not_clear")
     mismatches = [item["field"] for item in comparisons if item["status"] == "MISMATCH"]
     incomplete = [item["field"] for item in comparisons if item["status"] == "INCOMPLETE"]
