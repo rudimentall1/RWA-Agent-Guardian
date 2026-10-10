@@ -165,8 +165,10 @@ class AgentDecisionTests(unittest.TestCase):
         self.assertEqual(sent["format"]["additionalProperties"], False)
         self.assertEqual(sent["options"]["temperature"], 0)
         self.assertEqual(sent["options"]["num_ctx"], 512)
-        self.assertEqual(sent["options"]["num_predict"], 48)
+        self.assertEqual(sent["options"]["num_predict"], 64)
         self.assertEqual(sent["options"]["num_thread"], 16)
+        self.assertIn("amount exactly maxAllowedAmount", sent["messages"][0]["content"])
+        self.assertIn("2 to 4 words", sent["messages"][0]["content"])
         self.assertEqual(set(json.loads(sent["messages"][1]["content"]).keys()), {
             "status", "funded", "paid", "observedAt", "mandateActive",
             "mandateExpiresAt", "perPaymentLimit", "totalLimit", "spent", "nonce",
