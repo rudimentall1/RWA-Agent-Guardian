@@ -278,7 +278,7 @@ def canonical_decision_reason(context, decision):
     return human_reason
 
 
-def ask_ollama(context, max_allowed, model, url, timeout_seconds=120):
+def ask_ollama(context, max_allowed, model, url, timeout_seconds=300):
     """Ask a local Ollama model for a bounded decision; fail closed on every invalid response."""
     system_prompt = (
         "Return one JSON payment decision. If status is not 2, use BLOCK, amount 0, reason invoice_not_accepted. "
@@ -496,7 +496,7 @@ def main():
     payment = int(env("AGENT_PAYMENT_AMOUNT", "2000000000"))
     interval = max(1, int(env("AGENT_INTERVAL_SECONDS", "30")))
     max_payments = max(1, int(env("AGENT_MAX_PAYMENTS", "3")))
-    model = os.environ.get("AGENT_AI_MODEL", "qwen2.5:0.5b")
+    model = os.environ.get("AGENT_AI_MODEL", "qwen2.5:3b")
     ai_url = os.environ.get("AGENT_AI_URL", "http://127.0.0.1:11434/api/chat")
     ai_timeout = float(os.environ.get("AGENT_AI_TIMEOUT_SECONDS", "300"))
     payments_sent = 0
