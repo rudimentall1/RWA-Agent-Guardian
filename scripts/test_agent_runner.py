@@ -83,6 +83,8 @@ class AgentRunnerDecodeTests(unittest.TestCase):
                 return config["settlement"]
             if args[0] == "call" and args[2] == "owner()(address)":
                 return config["agentOwner"]
+            if args[0] == "call" and args[2] == "SETTLEMENT_VERSION()(uint256)":
+                return "2"
             if args[0] == "call" and args[2] == "intentDomainSeparator()(bytes32)":
                 return "0x" + "c" * 64
             raise AssertionError(f"Unexpected cast call: {args}")
@@ -243,6 +245,28 @@ class AgentDecisionTests(unittest.TestCase):
                 "0x" + "a" * 64,
             )
 
+    def test_legacy_settlement_is_rejected_in_signed_intent_mode(self):
+        config = AgentRunnerDecodeTests.valid_config()
+
+        def fake_cast(*args, **kwargs):
+            if args[0] == "chain-id":
+                return str(config["chainId"])
+            if args[0] == "code":
+                return "0x60006000"
+            if args[0] == "call" and args[2] == "settlement()(address)":
+                return config["settlement"]
+            if args[0] == "call" and args[2] == "owner()(address)":
+                return config["agentOwner"]
+            if args[0] == "call" and args[2] == "SETTLEMENT_VERSION()(uint256)":
+                raise __import__("subprocess").CalledProcessError(1, ["cast"])
+            raise AssertionError(f"Unexpected cast call: {args}")
+
+        with patch("agent_runner.cast", side_effect=fake_cast):
+            with self.assertRaisesRegex(SystemExit, "settlement is legacy"):
+                validate_runtime_config(
+                    config, "https://rpc.invalid", config["agentOwner"], require_signed_intent=True
+                )
+
     def test_old_executor_is_rejected_in_signed_intent_mode(self):
         config = AgentRunnerDecodeTests.valid_config()
 
@@ -255,6 +279,8 @@ class AgentDecisionTests(unittest.TestCase):
                 return config["settlement"]
             if args[0] == "call" and args[2] == "owner()(address)":
                 return config["agentOwner"]
+            if args[0] == "call" and args[2] == "SETTLEMENT_VERSION()(uint256)":
+                return "2"
             if args[0] == "call" and args[2] == "intentDomainSeparator()(bytes32)":
                 raise __import__("subprocess").CalledProcessError(1, ["cast"])
             raise AssertionError(f"Unexpected cast call: {args}")
