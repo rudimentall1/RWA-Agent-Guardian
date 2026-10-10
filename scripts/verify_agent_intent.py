@@ -148,7 +148,11 @@ def verify_signature_offline(typed_data, signature, signer):
                 Path(temp_path).unlink(missing_ok=True)
             except OSError:
                 pass
-    if result not in ("true", "1"):
+    # Foundry versions may print either a boolean-like result or a success sentence.
+    # The CLI exit status is already checked by subprocess.run(check=True) in cast().
+    result_lower = result.lower()
+    success_message = "validation succeeded" in result_lower and signer.lower() in result_lower
+    if result not in ("true", "1") and not success_message:
         raise SystemExit("EIP-712 signature does not recover to the configured agentOwner")
 
 
