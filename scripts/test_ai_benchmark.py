@@ -1,5 +1,6 @@
 """Offline unit tests for the AI benchmark harness. No Ollama calls are made."""
 import json
+from contextlib import ExitStack
 import sys
 import tempfile
 import unittest
@@ -75,9 +76,11 @@ class AIBenchmarkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = str(Path(tmp) / "benchmark.json")
             argv = ["ai_benchmark.py", "--repeats", "2", "--output", output]
-            with patch.object(sys, "argv", argv), \\
-                 patch.object(ai_benchmark, "ask_ollama", side_effect=proposals) as ask, \\
-                 patch.object(ai_benchmark, "canonical_decision_reason", side_effect=SystemExit("safe block")):
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(sys, "argv", argv))
+                ask = stack.enter_context(patch.object(ai_benchmark, "ask_ollama", side_effect=proposals))
+                stack.enter_context(patch.object(ai_benchmark, "canonical_decision_reason", side_effect=SystemExit("safe block")))
+                self.assertEqual(ai_benchmark.main(), 0)
                 self.assertEqual(ai_benchmark.main(), 0)
             report = json.loads(Path(output).read_text(encoding="utf-8"))
             self.assertEqual(ask.call_count, 8)
