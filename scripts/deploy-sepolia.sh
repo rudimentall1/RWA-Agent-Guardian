@@ -60,22 +60,9 @@ fi
 if [[ -z "$TX_MAX_FEE_PER_GAS" || -z "$TX_PRIORITY_FEE_PER_GAS" ]]; then
   GAS_PRICE_HEX="$(cast rpc --rpc-url "$SEPOLIA_RPC_URL" eth_gasPrice)"
   PRIORITY_HEX="$(cast rpc --rpc-url "$SEPOLIA_RPC_URL" eth_maxPriorityFeePerGas 2>/dev/null || true)"
-  read -r DEFAULT_MAX_FEE DEFAULT_PRIORITY_FEE < <(python3 - "$GAS_PRICE_HEX" "$PRIORITY_HEX" <<'PY'
-import sys
-
-def parse_quantity(raw):
-    value = raw.strip().strip('"')
-    return int(value, 16) if value.startswith("0x") else int(value)
-
-gas_price = parse_quantity(sys.argv[1])
-try:
-    priority = parse_quantity(sys.argv[2]) if sys.argv[2].strip() else 0
-except (ValueError, TypeError):
-    priority = 0
-priority = max(priority, gas_price // 4, 1_000_000_000)
-max_fee = max(3_000_000_000, gas_price * 2 + priority)
-print(max_fee, priority)
-PY
+  BASE_FEE_HEX="$(cast block latest --rpc-url "$SEPOLIA_RPC_URL" --json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("baseFeePerGas") or "")')"
+  read -r DEFAULT_MAX_FEE DEFAULT_PRIORITY_FEE < <(
+    python3 scripts/fee_policy.py "$GAS_PRICE_HEX" "$PRIORITY_HEX" "$BASE_FEE_HEX"
   )
   TX_MAX_FEE_PER_GAS="${TX_MAX_FEE_PER_GAS:-$DEFAULT_MAX_FEE}"
   TX_PRIORITY_FEE_PER_GAS="${TX_PRIORITY_FEE_PER_GAS:-$DEFAULT_PRIORITY_FEE}"
