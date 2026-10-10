@@ -56,7 +56,7 @@ class InvoiceEvidenceExtractorTests(unittest.TestCase):
             "due_date": "2026-11-01", "line_items": [{"description": "Service"}],
             "payment_terms_text": None, "uncertainties": [],
         }
-        with self.assertRaisesRegex(RuntimeError, r"line_items\\[0\\]"):
+        with self.assertRaisesRegex(RuntimeError, r"line_items\[0\]"):
             extractor.validate_claims(claims)
 
     def test_rejects_non_string_uncertainty(self):
