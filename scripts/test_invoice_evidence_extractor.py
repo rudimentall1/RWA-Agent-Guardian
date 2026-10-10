@@ -39,6 +39,35 @@ class InvoiceEvidenceExtractorTests(unittest.TestCase):
             self.assertFalse(result["trustBoundary"]["paymentAuthorization"])
             self.assertEqual(result["claims"]["invoice_number"], "INV-42")
 
+    def test_rejects_non_string_scalar_claims(self):
+        claims = {
+            "invoice_number": 42, "issuer_name": "Supplier Ltd", "debtor_name": "Buyer Ltd",
+            "currency": "EUR", "total_amount_text": "2000.00", "issue_date": "2026-10-01",
+            "due_date": "2026-11-01", "line_items": [], "payment_terms_text": None,
+            "uncertainties": [],
+        }
+        with self.assertRaisesRegex(RuntimeError, "invoice_number"):
+            extractor.validate_claims(claims)
+
+    def test_rejects_malformed_line_item(self):
+        claims = {
+            "invoice_number": "INV-42", "issuer_name": "Supplier Ltd", "debtor_name": "Buyer Ltd",
+            "currency": "EUR", "total_amount_text": "2000.00", "issue_date": "2026-10-01",
+            "due_date": "2026-11-01", "line_items": [{"description": "Service"}],
+            "payment_terms_text": None, "uncertainties": [],
+        }
+        with self.assertRaisesRegex(RuntimeError, r"line_items\\[0\\]"):
+            extractor.validate_claims(claims)
+
+    def test_rejects_non_string_uncertainty(self):
+        claims = {
+            "invoice_number": None, "issuer_name": None, "debtor_name": None, "currency": None,
+            "total_amount_text": None, "issue_date": None, "due_date": None, "line_items": [],
+            "payment_terms_text": None, "uncertainties": [False],
+        }
+        with self.assertRaisesRegex(RuntimeError, "uncertainties"):
+            extractor.validate_claims(claims)
+
     def test_empty_source_fails_before_network_request(self):
         with self.assertRaisesRegex(ValueError, "empty"):
             extractor.extract_claims("  ", "qwen2.5:3b", "http://127.0.0.1:11434/api/chat")
