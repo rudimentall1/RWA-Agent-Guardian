@@ -177,7 +177,7 @@ class AgentDecisionTests(unittest.TestCase):
         self.assertEqual(sent["options"]["num_predict"], 32)
         self.assertEqual(sent["options"]["num_thread"], 4)
         self.assertIn("amount exactly maxAllowedAmount", sent["messages"][0]["content"])
-        self.assertIn("2 to 3 words", sent["messages"][0]["content"])
+        self.assertIn("schema's exact reason codes", sent["messages"][0]["content"])
         self.assertEqual(set(json.loads(sent["messages"][1]["content"]).keys()), {
             "status", "observedAt", "mandateActive", "mandateExpiresAt", "maxAllowedAmount",
         })
