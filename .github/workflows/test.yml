@@ -36,5 +36,5 @@ jobs:
       - run: bash -n scripts/deploy-intent-executor-sepolia.sh
       - run: bash -n scripts/deploy-sepolia.sh
       - run: bash scripts/test_deploy_guards.sh
-      - run: python -m py_compile scripts/agent_runner.py
+      - run: python -m py_compile scripts/agent_runner.py scripts/verify_agent_intent.py scripts/fee_policy.py
       - run: python -m unittest discover -s scripts -p "test_*.py"
