@@ -6,11 +6,11 @@ This is a first-pass triage of the current `main` branch, not an independent aud
 
 Checks observed during this review:
 - Full `forge test -q`: exit code 0.
-- `python3 -m unittest discover -s scripts -p 'test*.py' -v`: 53 tests passed.
+- `python3 -m unittest discover -s scripts -p 'test*.py' -v`: 53 tests passed before the new benchmark tests were added.
 - `forge test --match-path test/InvoiceSettlement.t.sol -q`: exit code 0.
-- Slither: analyzed 4 contracts with 102 detectors and reported 14 results. Slither exited 255 because findings were emitted; this is not equivalent to a compiler/test failure.
+- Slither reported 14 results across 4 contracts. The full detector list was not independently re-verified in this pass. Slither's nonzero exit after reporting findings is not equivalent to a compiler/test failure.
 
-The captured Slither output includes the categories below. This triage does not claim that every one of the 14 results is independently exploitable.
+The reviewed categories include the following. This triage does not claim that every reported result is independently exploitable.
 
 ## Findings and disposition
 
