@@ -27,11 +27,11 @@ Ethereum is part of the enforcement boundary, not merely a record of the outcome
 
 ## Honest scope and limitations
 
-The Ollama decision mode requires a local Ollama service and the updated `DemoAgentExecutor` bytecode. The public executor currently configured for the UI has not been upgraded, so signed-intent mode stops during preflight rather than sending a transaction. Deploy an updated executor and have the payer authorize its address before using AI mode. The deterministic compatibility mode remains available for the legacy demo. The payer must still accept and fund the invoice; the agent-owner key must be separate from the payer key.
+The Ollama decision mode requires a local Ollama service and an executor with the EIP-712 intent interface. The current public UI points to the newly deployed v2 `DemoAgentExecutor`, and read-only Sepolia checks confirmed that its intent domain is available. The new invoice is registered, but it is not yet accepted or funded and the executor mandate is not active; the payer must accept the invoice, fund escrow, and authorize the executor before AI mode can execute. The agent-owner key must remain separate from the payer key. The deterministic compatibility mode remains available for the older demo.
 
 Invoice registration is permissionless, but the EIP-712 signature proves only that the named issuer signed the specified terms. It is not legal due diligence or proof that the invoice represents an enforceable receivable. The invoice and dUSD token are synthetic test fixtures; they do not represent a real receivable, legal ownership claim, or regulated asset. The resolver and its administrator remain trusted roles. This prototype has not had an independent security audit and is not ready for production funds.
 
-The UI's configured Sepolia settlement and the earlier deployment used for the recorded three-payment sequence are different contract instances. Both public deployments predate the current dispute-escalation and signed-intent changes: the currently configured settlement still has the timeout-reopens behavior, and its executor lacks the EIP-712 intent interface. The source-level fixes pass CI but are not live at these addresses. `scripts/deploy-sepolia.sh` can create fresh current-source contracts and a fresh synthetic invoice; it does not migrate the previous state. Do not combine the earlier payment receipts with the current UI addresses. Exact addresses and evidence are documented in [the deployment record](demo-evidence-2026-10-09.md).
+The current UI's Sepolia settlement and executor are a fresh v2 pair deployed on 2026-10-10. Read-only RPC checks confirmed `SETTLEMENT_VERSION() == 2`, a working `intentDomainSeparator()`, and code at both contract addresses. The earlier deployment used for the recorded three-payment sequence is separate and remains legacy; do not combine its payment receipts with the current UI's addresses or invoice state. The new deployment has only registered the synthetic invoice and minted demo tokens to the payer: no acceptance, escrow funding, executor authorization, or payment is claimed. `scripts/deploy-sepolia.sh` creates fresh instances rather than migrating prior state. Exact addresses, receipt hashes, and checks are documented in [the current deployment record](deployment-evidence-2026-10-10.md) and [the older demo record](demo-evidence-2026-10-09.md).
 
 A separate exploratory prototype informed the problem choice. This repository implements the invoice lifecycle, escrow settlement, and dispute-state enforcement as a separate codebase. The repository history should be used to assess what was built during the event; no claim is made that the broader idea originated during the event.
 
@@ -42,7 +42,8 @@ A separate exploratory prototype informed the problem choice. This repository im
 - GitHub repository: https://github.com/rudimentall1/RWA-Agent-Guardian
 - Demo scenario and assertions: [docs/DEMO_SCENARIO.md](DEMO_SCENARIO.md)
 - Threat model: [docs/THREAT_MODEL.md](THREAT_MODEL.md)
-- Onchain deployment evidence: [docs/demo-evidence-2026-10-09.md](demo-evidence-2026-10-09.md)
+- Current onchain deployment evidence: [docs/deployment-evidence-2026-10-10.md](deployment-evidence-2026-10-10.md)
+- Recorded earlier demo receipts: [docs/demo-evidence-2026-10-09.md](demo-evidence-2026-10-09.md)
 
 ## Technology
 
