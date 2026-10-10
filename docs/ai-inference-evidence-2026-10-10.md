@@ -17,6 +17,7 @@ Synthetic decision facts:
 - Canonical reason returned by the policy gate: `Within current on-chain caps`.
 - Earlier observed inference time: approximately 52 seconds on this CPU-only host.
 - Repeat verification against the latest runner source on 10 October: `ALLOW`, amount `2000`, reason `within_limits`; 98.1 seconds end to end on a cold model start, including about 67 seconds to load the model and 29 seconds for the API inference.
+- Additional repeat on 10 October using the same `qwen2.5:3b` model and accepted-invoice facts returned `BLOCK`, amount `0`, reason `invoice_not_accepted` after 64.9 seconds. The policy gate rejected this contradiction with `AI reason code contradicts the decision or checked policy facts; no transaction sent`. This repeat only called local inference and the canonical gate; no intent was signed and no RPC or transaction was used.
 
 The model only proposed the decision. The separate gate checked that the status, mandate, deadline and amount agree before the decision can be signed. The repeat verification printed the proposal and canonical reason only; it did not create a signature, write proof evidence, contact Sepolia, or broadcast a transaction.
 
