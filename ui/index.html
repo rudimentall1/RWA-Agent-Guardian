@@ -51,6 +51,7 @@
   </header>
 
   <div id="notice" class="status">Loading public Sepolia state. Connect the registered payer wallet to submit transactions.</div>
+  <div id="deploymentWarning" class="status bad" hidden></div>
 
   <div class="grid">
     <section class="panel">
@@ -360,7 +361,17 @@
         "Legacy executor (no intent API)" : "Executor capabilities could not be checked";
     }
     $("protectionStatus").textContent = settlementCapability + " · " + executorCapability;
-
+    const currentSettlement = settlementCapability === "Settlement v2 (ESCALATED)";
+    const currentExecutor = executorCapability === "EIP-712 intents enabled";
+    const capabilityCheckFailed =
+      /could not be checked|check failed/i.test(settlementCapability + " " + executorCapability);
+    const deploymentWarning = $("deploymentWarning");
+    deploymentWarning.hidden = currentSettlement && currentExecutor;
+    deploymentWarning.textContent = deploymentWarning.hidden ? "" :
+      (capabilityCheckFailed
+        ? "Could not verify the deployed protections from the configured RPC. Do not assume the source-level fixes are active until both contract interfaces are confirmed."
+        : "Legacy or incompatible on-chain deployment: the configured settlement and/or executor does not expose the current protections. The repository's ESCALATED dispute handling and signed AI-intent interface are not active at this address pair. Deploy the current source and update the UI config before presenting those guarantees.");
+    
     $("funded").textContent = formatDUSD(inv.funded) + " dUSD";
     $("paid").textContent = formatDUSD(inv.paid) + " dUSD";
     $("balance").textContent = formatDUSD(balance) + " dUSD";
