@@ -8,8 +8,40 @@ cd "$(dirname "$0")/.."
 RPC_URL="${SEPOLIA_RPC_URL:-https://ethereum-sepolia-rpc.publicnode.com}"
 CONFIG_PATH="${DEPLOYMENT_CONFIG:-deployments-sepolia.json}"
 UI_CONFIG_PATH="${UI_CONFIG_PATH:-ui/config.js}"
-MAX_FEE="${TX_MAX_FEE_PER_GAS:-10000000}"
-PRIORITY_FEE="${TX_PRIORITY_FEE_PER_GAS:-5000000}"
+MAX_FEE="${TX_MAX_FEE_PER_GAS:-}"
+PRIORITY_FEE="${TX_PRIORITY_FEE_PER_GAS:-}"
+if [[ -z "$MAX_FEE" || -z "$PRIORITY_FEE" ]]; then
+  GAS_PRICE_HEX="$(cast rpc --rpc-url "$RPC_URL" eth_gasPrice)"
+  PRIORITY_HEX="$(cast rpc --rpc-url "$RPC_URL" eth_maxPriorityFeePerGas 2>/dev/null || true)"
+  read -r DEFAULT_MAX_FEE DEFAULT_PRIORITY_FEE < <(python3 - "$GAS_PRICE_HEX" "$PRIORITY_HEX" <<'PY'
+import sys
+
+def parse_quantity(raw):
+    value = raw.strip().strip('"')
+    return int(value, 16) if value.startswith("0x") else int(value)
+
+gas_price = parse_quantity(sys.argv[1])
+try:
+    priority = parse_quantity(sys.argv[2]) if sys.argv[2].strip() else 0
+except (ValueError, TypeError):
+    priority = 0
+
+# Some public RPCs do not implement eth_maxPriorityFeePerGas. Use a conservative
+# fraction of eth_gasPrice in that case, and keep a 1 gwei priority-fee floor.
+priority = max(priority, gas_price // 4, 1_000_000_000)
+max_fee = max(3_000_000_000, gas_price * 2 + priority)
+print(max_fee, priority)
+PY
+  )
+  MAX_FEE="${MAX_FEE:-$DEFAULT_MAX_FEE}"
+  PRIORITY_FEE="${PRIORITY_FEE:-$DEFAULT_PRIORITY_FEE}"
+fi
+if [[ ! "$MAX_FEE" =~ ^[0-9]+$ || ! "$PRIORITY_FEE" =~ ^[0-9]+$ ]] ||
+   (( PRIORITY_FEE > MAX_FEE )); then
+  echo "Invalid EIP-1559 fee configuration: max=$MAX_FEE priority=$PRIORITY_FEE. No transaction sent." >&2
+  exit 1
+fi
+echo "Using transaction fees: maxFeePerGas=$MAX_FEE wei; maxPriorityFeePerGas=$PRIORITY_FEE wei." >&2
 
 if [[ -z "${DEPLOYER_PRIVATE_KEY:-}" ]]; then
   echo "Set DEPLOYER_PRIVATE_KEY in the environment. It is never written to config." >&2
