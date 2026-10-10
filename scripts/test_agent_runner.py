@@ -6,8 +6,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 from agent_runner import (
-    ask_ollama, build_intent_typed_data, canonical_decision_reason,
-    compact_model_context, decode_words,
+    DECISION_REASON_CODES, ask_ollama, build_intent_typed_data,
+    canonical_decision_reason, compact_model_context, decode_words,
     extract_transaction_hash, load_agent_private_key, parse_ai_decision,
     validate_config_shape, validate_runtime_config, validate_successful_receipt,
 )
@@ -115,7 +115,7 @@ class AgentRunnerDecodeTests(unittest.TestCase):
 class AgentDecisionTests(unittest.TestCase):
     def test_accepts_bounded_ollama_allow(self):
         result = parse_ai_decision(
-            json.dumps({"decision": "ALLOW", "amount": 150, "reason": "Funds and mandate are available"}),
+            json.dumps({"decision": "ALLOW", "amount": 150, "reason": "within_limits"}),
             max_allowed=200,
         )
         self.assertEqual(result["decision"], "ALLOW")
@@ -124,21 +124,28 @@ class AgentDecisionTests(unittest.TestCase):
     def test_rejects_model_amount_above_policy_cap(self):
         with self.assertRaisesRegex(SystemExit, "policy maximum"):
             parse_ai_decision(
-                json.dumps({"decision": "ALLOW", "amount": 201, "reason": "try too much"}),
+                json.dumps({"decision": "ALLOW", "amount": 201, "reason": "within_limits"}),
                 max_allowed=200,
             )
 
     def test_wait_and_block_must_have_zero_amount(self):
         with self.assertRaisesRegex(SystemExit, "amount 0"):
             parse_ai_decision(
-                json.dumps({"decision": "BLOCK", "amount": 1, "reason": "blocked"}),
+                json.dumps({"decision": "BLOCK", "amount": 1, "reason": "model_block"}),
                 max_allowed=200,
+            )
+
+    def test_rejects_unknown_reason_code(self):
+        with self.assertRaisesRegex(SystemExit, "allowed policy reason codes"):
+            parse_ai_decision(
+                json.dumps({"decision": "ALLOW", "amount": 10, "reason": "exceed max allowed amount"}),
+                max_allowed=20,
             )
 
     def test_rejects_boolean_as_integer_amount(self):
         with self.assertRaisesRegex(SystemExit, "non-negative integer"):
             parse_ai_decision(
-                json.dumps({"decision": "ALLOW", "amount": True, "reason": "bad type"}),
+                json.dumps({"decision": "ALLOW", "amount": True, "reason": "within_limits"}),
                 max_allowed=200,
             )
 
@@ -151,7 +158,7 @@ class AgentDecisionTests(unittest.TestCase):
 
     def test_ollama_request_uses_json_schema_and_parses_content(self):
         payload = {"message": {"content": json.dumps(
-            {"decision": "ALLOW", "amount": 75, "reason": "Within the funded limit"}
+            {"decision": "ALLOW", "amount": 75, "reason": "within_limits"}
         )}}
         response = MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps(payload).encode("utf-8")
@@ -164,6 +171,7 @@ class AgentDecisionTests(unittest.TestCase):
         sent = json.loads(request.data.decode("utf-8"))
         self.assertEqual(sent["model"], "qwen2.5:3b")
         self.assertEqual(sent["format"]["additionalProperties"], False)
+        self.assertEqual(sent["format"]["properties"]["reason"]["enum"], list(DECISION_REASON_CODES))
         self.assertEqual(sent["options"]["temperature"], 0)
         self.assertEqual(sent["options"]["num_ctx"], 256)
         self.assertEqual(sent["options"]["num_predict"], 32)
@@ -184,12 +192,23 @@ class AgentDecisionTests(unittest.TestCase):
         proposal = {
             "decision": "ALLOW",
             "amount": 2_000,
-            "reason": "exceed max allowed amount",
+            "reason": "within_limits",
         }
         self.assertEqual(
             canonical_decision_reason(context, proposal),
             "Within current on-chain caps",
         )
+
+    def test_canonical_reason_rejects_reason_code_that_contradicts_allow(self):
+        context = {
+            "invoice": {"status": 2},
+            "mandate": {"active": True, "expiresAt": 2_000},
+            "observedAt": 1_000,
+            "maxAllowedAmount": 2_000,
+        }
+        proposal = {"decision": "ALLOW", "amount": 2_000, "reason": "no_capacity"}
+        with self.assertRaisesRegex(SystemExit, "reason code contradicts"):
+            canonical_decision_reason(context, proposal)
 
     def test_canonical_reason_refuses_allow_when_facts_do_not_permit_it(self):
         context = {
@@ -198,7 +217,7 @@ class AgentDecisionTests(unittest.TestCase):
             "observedAt": 1_000,
             "maxAllowedAmount": 2_000,
         }
-        proposal = {"decision": "ALLOW", "amount": 1_000, "reason": "looks fine"}
+        proposal = {"decision": "ALLOW", "amount": 1_000, "reason": "within_limits"}
         with self.assertRaisesRegex(SystemExit, "does not match"):
             canonical_decision_reason(context, proposal)
 
