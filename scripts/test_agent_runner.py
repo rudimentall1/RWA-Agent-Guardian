@@ -164,15 +164,13 @@ class AgentDecisionTests(unittest.TestCase):
         self.assertEqual(sent["model"], "qwen2.5:3b")
         self.assertEqual(sent["format"]["additionalProperties"], False)
         self.assertEqual(sent["options"]["temperature"], 0)
-        self.assertEqual(sent["options"]["num_ctx"], 512)
-        self.assertEqual(sent["options"]["num_predict"], 64)
-        self.assertEqual(sent["options"]["num_thread"], 16)
+        self.assertEqual(sent["options"]["num_ctx"], 256)
+        self.assertEqual(sent["options"]["num_predict"], 32)
+        self.assertEqual(sent["options"]["num_thread"], 4)
         self.assertIn("amount exactly maxAllowedAmount", sent["messages"][0]["content"])
-        self.assertIn("2 to 4 words", sent["messages"][0]["content"])
+        self.assertIn("2 to 3 words", sent["messages"][0]["content"])
         self.assertEqual(set(json.loads(sent["messages"][1]["content"]).keys()), {
-            "status", "funded", "paid", "observedAt", "mandateActive",
-            "mandateExpiresAt", "perPaymentLimit", "totalLimit", "spent", "nonce",
-            "maxAllowedAmount",
+            "status", "observedAt", "mandateActive", "mandateExpiresAt", "maxAllowedAmount",
         })
 
     def test_model_context_is_compact_and_does_not_expose_addresses(self):
@@ -198,6 +196,8 @@ class AgentDecisionTests(unittest.TestCase):
         self.assertNotIn("executor", compact)
         self.assertNotIn("invoiceId", compact)
         self.assertNotIn("dueAt", compact)
+        self.assertNotIn("funded", compact)
+        self.assertNotIn("totalLimit", compact)
 
     def test_ollama_service_failure_fails_closed(self):
         with patch("agent_runner.urllib.request.urlopen", side_effect=URLError("offline")):
