@@ -348,20 +348,26 @@
       $("termsCheck").textContent =
         inv.termsHash.toLowerCase() === expectedTermsHash.toLowerCase() ?
           "Canonical fields and document hash match" : "Canonical commitment mismatch";
-    } catch (_) {
-      // Older public deployments predate the canonical commitment API.
-      const legacyPreimage = "INV-1001|Synthetic invoice|10000 dUSD|NET30|v1";
-      const legacyHash = ethers.keccak256(ethers.toUtf8Bytes(legacyPreimage));
-      $("termsCheck").textContent =
-        inv.termsHash.toLowerCase() === legacyHash.toLowerCase() ?
-          "Legacy descriptor matches; fields not bound" : "Commitment mismatch";
+    } catch (error) {
+      if (window.RWA_PREFLIGHT_POLICY.isUnsupportedReadError(error)) {
+        // Legacy deployments return empty data for methods added in later source versions.
+        const legacyPreimage = "INV-1001|Synthetic invoice|10000 dUSD|NET30|v1";
+        const legacyHash = ethers.keccak256(ethers.toUtf8Bytes(legacyPreimage));
+        $("termsCheck").textContent =
+          inv.termsHash.toLowerCase() === legacyHash.toLowerCase() ?
+            "Legacy descriptor matches; fields not bound" : "Commitment mismatch";
+      } else {
+        $("termsCheck").textContent = "Not verified: RPC/read failure";
+      }
     }
     try {
       const attestationDigest = await readSettlement.invoiceAttestationDigests(activeInvoiceId);
       $("issuerAttestation").textContent = attestationDigest !== ethers.ZeroHash ?
         "EIP-712 signature verified onchain" : "No signed attestation";
-    } catch (_) {
-      $("issuerAttestation").textContent = "Not supported by this deployment";
+    } catch (error) {
+      $("issuerAttestation").textContent =
+        window.RWA_PREFLIGHT_POLICY.isUnsupportedReadError(error) ?
+          "Not supported by this deployment" : "Not verified: RPC/read failure";
     }
     $("mandateState").textContent = mandateStatus;
     $("perLimit").textContent = formatDUSD(mandate.perPaymentLimit) + " dUSD";
