@@ -81,7 +81,6 @@ class AIBenchmarkTests(unittest.TestCase):
                 ask = stack.enter_context(patch.object(ai_benchmark, "ask_ollama", side_effect=proposals))
                 stack.enter_context(patch.object(ai_benchmark, "canonical_decision_reason", side_effect=SystemExit("safe block")))
                 self.assertEqual(ai_benchmark.main(), 0)
-                self.assertEqual(ai_benchmark.main(), 0)
             report = json.loads(Path(output).read_text(encoding="utf-8"))
             self.assertEqual(ask.call_count, 8)
             self.assertEqual(report["scenarios"], 4)
