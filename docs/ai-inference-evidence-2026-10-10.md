@@ -14,10 +14,11 @@ Synthetic decision facts:
 - Mandate: active and not expired.
 - Computed maximum payment: 2,000 token base units for this fixture.
 - Model output: `ALLOW`, amount `2000`, reason code `within_limits`.
-- Deterministic reason shown and signed in the decision record: `Within current on-chain caps`.
-- Observed inference time: approximately 52 seconds on this CPU-only host.
+- Canonical reason returned by the policy gate: `Within current on-chain caps`.
+- Earlier observed inference time: approximately 52 seconds on this CPU-only host.
+- Repeat verification against the latest runner source on 10 October: `ALLOW`, amount `2000`, reason `within_limits`; 98.1 seconds end to end on a cold model start, including about 67 seconds to load the model and 29 seconds for the API inference.
 
-The model only proposed the decision. The separate gate checked that the status, mandate, deadline and amount agree before the decision can be signed. This test stopped before signing.
+The model only proposed the decision. The separate gate checked that the status, mandate, deadline and amount agree before the decision can be signed. The repeat verification printed the proposal and canonical reason only; it did not create a signature, write proof evidence, contact Sepolia, or broadcast a transaction.
 
 ## Case B: invoice is disputed
 
@@ -25,7 +26,8 @@ Synthetic decision facts were the same except invoice status was changed to `DIS
 
 - Model output: `BLOCK`, amount `0`, reason code `invoice_not_accepted`.
 - Deterministic reason: `Invoice is not accepted`.
-- Observed inference time: approximately 10 seconds on this CPU-only host.
+- Earlier observed inference time: approximately 10 seconds on this CPU-only host.
+- Repeat verification after the model was warm: `BLOCK`, amount `0`, reason `invoice_not_accepted`; 14.0 seconds.
 
 No transaction was sent.
 
