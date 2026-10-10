@@ -25,7 +25,7 @@ DECISION_SCHEMA = {
     "properties": {
         "decision": {"type": "string", "enum": ["ALLOW", "WAIT", "BLOCK"]},
         "amount": {"type": "integer", "minimum": 0},
-        "reason": {"type": "string", "maxLength": 80},
+        "reason": {"type": "string", "maxLength": 48},
     },
     "required": ["decision", "amount", "reason"],
     "additionalProperties": False,
@@ -209,32 +209,25 @@ def parse_ai_decision(raw, max_allowed):
 
 
 def compact_model_context(context, max_allowed):
-    """Expose only payment-policy facts to the model; retain full context in signed evidence."""
+    """Expose the minimal decision facts; full chain context stays in signed evidence."""
     invoice = context.get("invoice", {})
     mandate = context.get("mandate", {})
     return {
         "status": invoice.get("status"),
-        "funded": invoice.get("funded"),
-        "paid": invoice.get("paid"),
         "observedAt": context.get("observedAt"),
         "mandateActive": mandate.get("active"),
         "mandateExpiresAt": mandate.get("expiresAt"),
-        "perPaymentLimit": mandate.get("perPaymentLimit"),
-        "totalLimit": mandate.get("totalLimit"),
-        "spent": mandate.get("spent"),
-        "nonce": mandate.get("nonce"),
         "maxAllowedAmount": max_allowed,
     }
 
 
 def ask_ollama(context, max_allowed, model, url, timeout_seconds=120):
-    """Ask a local Ollama model for a JSON proposal; failure or malformed output never falls back to ALLOW."""
+    """Ask a local Ollama model for a bounded decision; fail closed on every invalid response."""
     system_prompt = (
-        "Classify this payment using the supplied verified facts. You have no spending authority. "
-        "If status is 2, mandateActive is true, mandateExpiresAt is at least observedAt, "
-        "and maxAllowedAmount is positive, return ALLOW with amount exactly maxAllowedAmount. "
-        "Otherwise return WAIT or BLOCK with amount 0. Never invent a larger amount. "
-        "Return only the required JSON. Reason: 2 to 4 words."
+        "Return one JSON payment decision. If status is not 2, use BLOCK and amount 0. "
+        "If mandateActive is not true, mandateExpiresAt is before observedAt, or maxAllowedAmount is 0, "
+        "use WAIT and amount 0. Otherwise use ALLOW and amount exactly maxAllowedAmount. "
+        "Never exceed that amount. Reason: 2 to 3 words. No other text."
     )
     user_prompt = canonical_json(compact_model_context(context, max_allowed))
     body = {
@@ -243,9 +236,9 @@ def ask_ollama(context, max_allowed, model, url, timeout_seconds=120):
         "format": DECISION_SCHEMA,
         "options": {
             "temperature": 0,
-            "num_ctx": 512,
-            "num_predict": 64,
-            "num_thread": int(os.environ.get("AGENT_AI_NUM_THREADS", "16")),
+            "num_ctx": 256,
+            "num_predict": 32,
+            "num_thread": int(os.environ.get("AGENT_AI_NUM_THREADS", "4")),
         },
         "messages": [
             {"role": "system", "content": system_prompt},
