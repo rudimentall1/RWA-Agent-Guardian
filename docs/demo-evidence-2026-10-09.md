@@ -14,7 +14,7 @@ This note separates the deployment configured by the current GitHub Pages UI fro
 - Beneficiary: `0x000000000000000000000000000000000000B0B0`
 - Agent owner: `0xD2C8057711a42acC9fD2f4Dd06a262d8652971c2`
 
-At the time this evidence was collected, the values in `deployments-sepolia.json` matched the public `ui/config.js`. Read-only calls confirmed that the configured legacy executor pointed to this settlement contract and had the configured agent owner. The source has since added an EIP-712 signed-intent interface to `DemoAgentExecutor`; that new interface is not present at this deployed executor address. The settlement and invoice addresses remain the same, but the AI runner will stop before sending until an updated executor is deployed and the payer authorizes it.
+At the time this evidence was collected, the values in `deployments-sepolia.json` matched the public `ui/config.js`. Read-only calls confirmed that the configured executor pointed to this settlement and had the configured agent owner. Both onchain contracts remain legacy relative to current `main`: the executor lacks the EIP-712 signed-intent interface, and the settlement lacks the later `ESCALATED` dispute transition. The source fixes are not active at these addresses. AI mode refuses to send through the legacy executor. Use `scripts/deploy-sepolia.sh` to deploy the current settlement and executor as new instances; this does not migrate old state or receipts.
 
 At the time of the check, the invoice was `ACCEPTED`, with `10,000 dUSD` funded and `0 dUSD` paid. The executor mandate was active, with a `2,000 dUSD` per-payment limit, a `5,000 dUSD` aggregate limit, `0 dUSD` spent, and nonce `0`.
 
