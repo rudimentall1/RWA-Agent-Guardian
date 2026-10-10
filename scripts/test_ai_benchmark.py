@@ -67,6 +67,25 @@ class AIBenchmarkTests(unittest.TestCase):
             self.assertEqual(report["gateBlocks"], 4)
             self.assertTrue(all(r["gate"] == "BLOCK" for r in report["results"]))
 
+    def test_repeats_runs_each_scenario_multiple_times(self):
+        proposals = [
+            {"decision": "BLOCK", "amount": 0, "reason": "invoice_not_accepted"}
+            for _ in range(8)
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = str(Path(tmp) / "benchmark.json")
+            argv = ["ai_benchmark.py", "--repeats", "2", "--output", output]
+            with patch.object(sys, "argv", argv), \\
+                 patch.object(ai_benchmark, "ask_ollama", side_effect=proposals) as ask, \\
+                 patch.object(ai_benchmark, "canonical_decision_reason", side_effect=SystemExit("safe block")):
+                self.assertEqual(ai_benchmark.main(), 0)
+            report = json.loads(Path(output).read_text(encoding="utf-8"))
+            self.assertEqual(ask.call_count, 8)
+            self.assertEqual(report["scenarios"], 4)
+            self.assertEqual(report["repeatsPerScenario"], 2)
+            self.assertEqual(report["cases"], 8)
+            self.assertEqual([r["attempt"] for r in report["results"]], [1, 2, 1, 2, 1, 2, 1, 2])
+
 
 if __name__ == "__main__":
     unittest.main()
