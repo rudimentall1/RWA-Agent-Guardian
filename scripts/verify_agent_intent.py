@@ -166,7 +166,7 @@ def require_version_two_settlement(rpc, settlement):
         raise SystemExit(f"Configured settlement version is {version.strip()}, expected 2")
 
 
-def verify_execution_transaction(proof, rpc, executor):
+def verify_execution_transaction(proof, rpc, executor, settlement):
     tx_hash = proof["transactionHash"]
     try:
         tx = json.loads(cast("tx", tx_hash, "--rpc-url", rpc, json_output=True))
@@ -215,6 +215,52 @@ def verify_execution_transaction(proof, rpc, executor):
     if not successful:
         raise SystemExit("Recorded transaction receipt is not successful")
 
+    receipt_hash = receipt.get("transactionHash")
+    if receipt_hash is not None and (
+        not isinstance(receipt_hash, str) or receipt_hash.lower() != tx_hash.lower()
+    ):
+        raise SystemExit("Receipt transaction hash does not match the evidence")
+
+    event_topic = keccak_text(
+        "SettlementExecuted(bytes32,address,address,uint256,uint256,uint64)"
+    ).lower()
+    expected_topics = [
+        event_topic,
+        proof["context"]["invoiceId"].lower(),
+        ("0x" + "0" * 24 + executor[2:]).lower(),
+    ]
+    expected_amount = int(proof["decision"]["amount"])
+    expected_total_paid = int(proof["context"]["invoice"]["paid"]) + expected_amount
+    expected_nonce = int(proof["context"]["mandate"]["nonce"])
+    matching_event = False
+    for log in receipt.get("logs", []):
+        if not isinstance(log, dict):
+            continue
+        log_address = log.get("address")
+        topics = log.get("topics")
+        data = log.get("data")
+        if (
+            not isinstance(log_address, str)
+            or log_address.lower() != settlement.lower()
+            or not isinstance(topics, list)
+            or len(topics) < 3
+            or not all(isinstance(topic, str) for topic in topics[:3])
+            or [topic.lower() for topic in topics[:3]] != expected_topics
+            or not isinstance(data, str)
+        ):
+            continue
+        data_hex = data.removeprefix("0x")
+        if len(data_hex) != 3 * 64:
+            continue
+        values = [int(data_hex[i:i + 64], 16) for i in range(0, len(data_hex), 64)]
+        if values == [expected_amount, expected_total_paid, expected_nonce]:
+            matching_event = True
+            break
+    if not matching_event:
+        raise SystemExit(
+            "Receipt has no matching SettlementExecuted event from the configured settlement"
+        )
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -259,7 +305,7 @@ def main():
     )
     print("Executor verifyIntent(): OK")
     if proof["status"] == "EXECUTED":
-        verify_execution_transaction(evidence, rpc, executor)
+        verify_execution_transaction(evidence, rpc, executor, config["settlement"])
         print(f"Execution transaction and receipt: OK ({evidence['transactionHash']})")
     elif proof["status"] == "EXECUTION_FAILED":
         print("Signed intent is valid; transaction was not confirmed, as recorded in the evidence.")
