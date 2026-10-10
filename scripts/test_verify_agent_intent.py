@@ -3,7 +3,10 @@ import unittest
 from unittest.mock import patch
 
 from agent_runner import build_intent_typed_data
-from verify_agent_intent import validate_evidence, verify_execution_transaction, verify_signature_offline
+from verify_agent_intent import (
+    require_version_two_settlement, validate_evidence,
+    verify_execution_transaction, verify_signature_offline,
+)
 
 
 class VerifyAgentIntentTests(unittest.TestCase):
@@ -76,6 +79,28 @@ class VerifyAgentIntentTests(unittest.TestCase):
             "signature": self.signature,
             "transactionHash": None,
         }
+
+    def test_online_verifier_requires_settlement_version_two(self):
+        with patch("verify_agent_intent.cast", return_value="2") as mocked:
+            require_version_two_settlement("https://rpc.invalid", self.config["settlement"])
+        mocked.assert_called_once_with(
+            "call", self.config["settlement"], "SETTLEMENT_VERSION()(uint256)",
+            "--rpc-url", "https://rpc.invalid"
+        )
+
+    def test_online_verifier_rejects_legacy_settlement(self):
+        with patch("verify_agent_intent.cast", return_value="1"):
+            with self.assertRaisesRegex(SystemExit, "expected 2"):
+                require_version_two_settlement("https://rpc.invalid", self.config["settlement"])
+
+    def test_online_verifier_rejects_settlement_without_version_method(self):
+        import subprocess
+        with patch(
+            "verify_agent_intent.cast",
+            side_effect=subprocess.CalledProcessError(1, ["cast"]),
+        ):
+            with self.assertRaisesRegex(SystemExit, "is legacy"):
+                require_version_two_settlement("https://rpc.invalid", self.config["settlement"])
 
     def test_valid_evidence_metadata_is_consistent(self):
         with patch(
