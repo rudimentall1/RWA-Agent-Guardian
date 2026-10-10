@@ -64,6 +64,10 @@ contract InvoiceSettlementTest {
         settlement.authorizeAgent(INVOICE_ID, AGENT, 2_000, 5_000, mandateExpiry);
     }
 
+    function testSettlementVersionIdentifiesEscalatedStateMachine() public {
+        require(settlement.SETTLEMENT_VERSION() == 2, "settlement version mismatch");
+    }
+
     function _registerInvoice(
         bytes32 invoiceId,
         address payer,
