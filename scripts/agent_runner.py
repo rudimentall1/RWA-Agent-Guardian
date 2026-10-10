@@ -315,6 +315,44 @@ def verify_intent_onchain(rpc, executor, invoice_id, amount, nonce, deadline, co
         raise SystemExit("Executor rejected the signed intent during preflight; no transaction sent")
 
 
+def validate_successful_receipt(raw_receipt, expected_tx_hash):
+    """Require a successful, matching on-chain receipt before claiming EXECUTED."""
+    if not isinstance(expected_tx_hash, str) or not HASH_RE.fullmatch(expected_tx_hash):
+        raise SystemExit("Transaction hash is missing or malformed; execution not confirmed")
+    try:
+        receipt = json.loads(raw_receipt)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise SystemExit("RPC returned invalid transaction receipt JSON; execution not confirmed") from exc
+    if not isinstance(receipt, dict):
+        raise SystemExit("RPC transaction receipt has an invalid shape; execution not confirmed")
+
+    status = receipt.get("status")
+    try:
+        if isinstance(status, str):
+            status_value = int(status, 16) if status.startswith("0x") else int(status)
+        elif type(status) is int:
+            status_value = status
+        else:
+            raise ValueError("missing status")
+    except (TypeError, ValueError) as exc:
+        raise SystemExit("Transaction receipt has no valid status; execution not confirmed") from exc
+    if status_value != 1:
+        raise SystemExit("Transaction receipt status is not successful; execution not confirmed")
+
+    receipt_hash = receipt.get("transactionHash")
+    if receipt_hash is not None and (
+        not isinstance(receipt_hash, str) or receipt_hash.lower() != expected_tx_hash.lower()
+    ):
+        raise SystemExit("Receipt transaction hash does not match the submitted transaction")
+
+    return {
+        "transactionHash": expected_tx_hash,
+        "status": "0x1",
+        "blockNumber": receipt.get("blockNumber"),
+        "gasUsed": receipt.get("gasUsed"),
+    }
+
+
 def write_evidence(evidence, invoice_id, nonce):
     folder = Path(os.environ.get("AGENT_EVIDENCE_DIR", "agent-evidence"))
     folder.mkdir(parents=True, exist_ok=True)
@@ -567,12 +605,28 @@ def main():
                 raise SystemExit(f"Signed intent was not confirmed on-chain; evidence saved to {evidence_path}") from exc
 
             tx_hash_match = HASH_RE.search(tx_output)
+            if not tx_hash_match:
+                evidence["status"] = "EXECUTION_FAILED"
+                evidence["executionError"] = "cast send returned no transaction hash"
+                write_evidence(evidence, invoice_id, int(nonce))
+                raise SystemExit(f"No transaction hash returned; evidence saved to {evidence_path}")
+
+            tx_hash = tx_hash_match.group(0)
+            evidence["transactionHash"] = tx_hash
+            try:
+                receipt_output = cast("receipt", tx_hash, "--rpc-url", rpc, json_output=True)
+                confirmed_receipt = validate_successful_receipt(receipt_output, tx_hash)
+            except (subprocess.CalledProcessError, SystemExit) as exc:
+                evidence["status"] = "EXECUTION_FAILED"
+                evidence["executionError"] = "transaction receipt was not confirmed successful"
+                write_evidence(evidence, invoice_id, int(nonce))
+                raise SystemExit(f"Receipt verification failed; evidence saved to {evidence_path}") from exc
+
             evidence["status"] = "EXECUTED"
-            evidence["transactionHash"] = tx_hash_match.group(0) if tx_hash_match else None
-            evidence["transactionOutput"] = tx_output
+            evidence["receipt"] = confirmed_receipt
             write_evidence(evidence, invoice_id, int(nonce))
             print(
-                f"Execution confirmed: {evidence['transactionHash'] or tx_output}; "
+                f"Execution confirmed: {tx_hash}; block={confirmed_receipt.get('blockNumber')}; "
                 f"evidence={evidence_path}",
                 flush=True,
             )
