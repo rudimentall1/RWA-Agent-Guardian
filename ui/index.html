@@ -50,8 +50,7 @@
     <button class="primary" id="connect">Connect wallet</button>
   </header>
 
-  <div id="notice" class="status">Loading public Sepolia state. Connect the registered payer wallet to submit transactions.</div>
-  <div id="deploymentWarning" class="status bad" hidden></div>
+  <div id="notice" class="status">Loading public Sepolia state. Use the registered payer for invoice setup and the configured agent-owner wallet to sign and execute a payment intent.</div>
 
   <div class="grid">
     <section class="panel">
@@ -94,7 +93,7 @@
 
     <section class="panel wide">
       <h2>2. Check before signing</h2>
-      <p>Anyone can inspect public Sepolia state and run the preflight simulation without connecting a wallet. A rejected request is shown as BLOCK and never opens a wallet prompt. Executing a permitted payment requires the registered payer wallet.</p>
+      <p>Anyone can inspect public Sepolia state and run the preflight simulation without connecting a wallet. A rejected request is shown as BLOCK and never opens a wallet prompt. Executing a permitted payment requires an EIP-712 signature from the configured agent-owner wallet; the connected owner wallet submits the transaction.</p>
       <label for="amount">Settlement amount (dUSD)</label>
       <input id="amount" value="2000" inputmode="decimal">
       <div class="row">
@@ -163,8 +162,11 @@
   ];
   const executorAbi = [
     "function execute(bytes32,uint128,uint64,uint64)",
+    "function executeWithIntent(bytes32,uint128,uint64,uint64,bytes32,bytes32,bytes)",
+    "function verifyIntent(bytes32,uint128,uint64,uint64,bytes32,bytes32,bytes) view returns (bool)",
     "function intentDomainSeparator() view returns (bytes32)",
-    "error Unauthorized()"
+    "error Unauthorized()",
+    "error InvalidIntentSignature()"
   ];
   let provider, signer, userAddress, token, settlement, executor, lastCheckedAmount;
   let readProvider, readToken, readSettlement;
@@ -302,10 +304,11 @@
     }
     const invoice = await readSettlement.invoices(activeInvoiceId);
     if (invoice.payer.toLowerCase() !== userAddress.toLowerCase()) {
-      note("Public state is available. To submit transactions, connect the registered payer wallet shown below.", "bad");
+      const isAgentOwner = String(cfg.agentOwner || "").toLowerCase() === userAddress.toLowerCase();
+      note(isAgentOwner ? "Wallet connected as the configured agent owner. You can sign execution intents; use the registered payer wallet for invoice setup." : "Public state is available. Use the registered payer wallet for invoice setup or the configured agent-owner wallet to sign and execute a payment intent.", isAgentOwner ? "good" : "bad");
       return;
     }
-    note("Wallet connected as the registered payer. Review the public contract state before submitting transactions.", "good");
+    note("Wallet connected as the registered payer. Use the configured agent-owner wallet to sign and execute payment intents.", "good");
   }
   async function refresh() {
     ensureReadOnlyContracts();
@@ -361,17 +364,7 @@
         "Legacy executor (no intent API)" : "Executor capabilities could not be checked";
     }
     $("protectionStatus").textContent = settlementCapability + " · " + executorCapability;
-    const currentSettlement = settlementCapability === "Settlement v2 (ESCALATED)";
-    const currentExecutor = executorCapability === "EIP-712 intents enabled";
-    const capabilityCheckFailed =
-      /could not be checked|check failed/i.test(settlementCapability + " " + executorCapability);
-    const deploymentWarning = $("deploymentWarning");
-    deploymentWarning.hidden = currentSettlement && currentExecutor;
-    deploymentWarning.textContent = deploymentWarning.hidden ? "" :
-      (capabilityCheckFailed
-        ? "Could not verify the deployed protections from the configured RPC. Do not assume the source-level fixes are active until both contract interfaces are confirmed."
-        : "Legacy or incompatible on-chain deployment: the configured settlement and/or executor does not expose the current protections. The repository's ESCALATED dispute handling and signed AI-intent interface are not active at this address pair. Deploy the current source and update the UI config before presenting those guarantees.");
-    
+
     $("funded").textContent = formatDUSD(inv.funded) + " dUSD";
     $("paid").textContent = formatDUSD(inv.paid) + " dUSD";
     $("balance").textContent = formatDUSD(balance) + " dUSD";
@@ -446,8 +439,10 @@
       (limitReached ? "Spending limit reached" :
         (mandate.active ? (walletCanWrite ? "Update agent mandate" : walletPrompt + " to update mandate") :
           (walletCanWrite ? "Authorize agent" : walletPrompt + " to authorize")));
-    $("execute").disabled = !walletCanWrite;
-    $("execute").textContent = walletCanWrite ? "Execute allowed settlement" : walletPrompt + " to execute";
+    const walletIsAgentOwner = walletOnSepolia && userAddress &&
+      userAddress.toLowerCase() === String(cfg.agentOwner || "").toLowerCase();
+    $("execute").disabled = !walletIsAgentOwner;
+    $("execute").textContent = walletIsAgentOwner ? "Sign & execute as agent owner" : "Connect agent-owner wallet to execute";
     if (limitReached && $("decision").textContent === "No action checked yet.") {
       decision("The aggregate spending limit has been reached. New settlement requests are expected to return BLOCK.", "bad");
     }
@@ -598,10 +593,77 @@
   async function execute() {
     try {
       const checked = await preflight($("amount").value);
-      return await tx("Execute authorized settlement", () =>
-        executor.execute(activeInvoiceId, checked.rawAmount, checked.nonce, checked.deadline)
+      if (!signer || !provider || !userAddress) throw new Error("Connect the agent-owner wallet to sign this intent.");
+      const network = await provider.getNetwork();
+      if (Number(network.chainId) !== Number(cfg.chainId)) throw new Error("Switch the agent-owner wallet to Sepolia (11155111).");
+      if (userAddress.toLowerCase() !== String(cfg.agentOwner || "").toLowerCase()) {
+        throw new Error("Execution requires the configured agent-owner wallet, not the payer wallet. The payer wallet remains responsible for invoice acceptance, funding, and mandate authorization.");
+      }
+      const [invoice, mandate, latestBlock] = await Promise.all([
+        readSettlement.invoices(activeInvoiceId),
+        readSettlement.mandates(activeInvoiceId, cfg.agentExecutor),
+        readProvider.getBlock("latest")
+      ]);
+      if (!latestBlock || mandate.nonce !== checked.nonce || !mandate.active ||
+          BigInt(latestBlock.timestamp) > mandate.expiresAt || Number(invoice.status) !== 2) {
+        throw new Error("Invoice or mandate changed after preflight. Refresh state and check authorization again; no transaction was sent.");
+      }
+      const context = {
+        chainId: Number(cfg.chainId), invoiceId: activeInvoiceId,
+        settlement: cfg.settlement, executor: cfg.agentExecutor, token: cfg.token,
+        invoiceStatus: Number(invoice.status), funded: invoice.funded.toString(),
+        paid: invoice.paid.toString(), perPaymentLimit: mandate.perPaymentLimit.toString(),
+        totalLimit: mandate.totalLimit.toString(), spent: mandate.spent.toString(),
+        nonce: mandate.nonce.toString(), expiresAt: mandate.expiresAt.toString()
+      };
+      const contextHash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(context)));
+      const decisionRecord = {
+        schema: "rwa-agent-manual-intent/v1", decision: "ALLOW",
+        amount: checked.rawAmount.toString(), contextHash,
+        policy: "On-chain executor simulation succeeded; settlement enforces mandate caps"
+      };
+      const decisionHash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(decisionRecord)));
+      const domain = {
+        name: "RWA Agent Guardian Executor", version: "1",
+        chainId: Number(cfg.chainId), verifyingContract: cfg.agentExecutor
+      };
+      const types = { AgentIntent: [
+        { name: "invoiceId", type: "bytes32" },
+        { name: "amount", type: "uint128" },
+        { name: "nonce", type: "uint64" },
+        { name: "deadline", type: "uint64" },
+        { name: "contextHash", type: "bytes32" },
+        { name: "decisionHash", type: "bytes32" }
+      ] };
+      const message = {
+        invoiceId: activeInvoiceId, amount: checked.rawAmount,
+        nonce: checked.nonce, deadline: checked.deadline, contextHash, decisionHash
+      };
+      note("Review and sign the EIP-712 payment intent in the agent-owner wallet…");
+      const signature = await signer.signTypedData(domain, types, message);
+      const valid = await executor.verifyIntent(
+        activeInvoiceId, checked.rawAmount, checked.nonce, checked.deadline,
+        contextHash, decisionHash, signature
       );
-    } catch (_) { /* keep the preflight or transaction result visible */ }
+      if (!valid) throw new Error("The signed intent did not verify against the configured on-chain agent owner. No transaction was sent.");
+      note("Intent signature verified. Confirm the settlement transaction…", "good");
+      const response = await executor.executeWithIntent(
+        activeInvoiceId, checked.rawAmount, checked.nonce, checked.deadline,
+        contextHash, decisionHash, signature
+      );
+      note("Signed settlement submitted: " + response.hash);
+      const receipt = await response.wait();
+      if (!receipt || receipt.status !== 1) throw new Error("Settlement transaction reverted.");
+      note("Settlement confirmed in block " + receipt.blockNumber + ". Refreshing on-chain accounting.", "good");
+      await refresh();
+      decision("EXECUTED: signed ALLOW intent confirmed onchain. Transaction " + response.hash, "good");
+      return receipt;
+    } catch (error) {
+      note(explainError(error), "bad");
+      if (error?.code !== "ACTION_REJECTED" && error?.code !== 4001) {
+        decision("Execution not completed: " + explainError(error), "bad");
+      }
+    }
   }
   async function attack() {
     $("amount").value = "3000";
