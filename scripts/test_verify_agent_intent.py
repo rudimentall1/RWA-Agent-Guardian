@@ -168,13 +168,66 @@ class VerifyAgentIntentTests(unittest.TestCase):
             if command[0] == "tx":
                 return json.dumps({"to": self.config["agentExecutor"], "input": calldata})
             if command[0] == "receipt":
-                return json.dumps({"status": "0x1"})
+                return json.dumps({
+                    "transactionHash": "0x" + "9" * 64,
+                    "status": "0x1",
+                    "logs": [{
+                        "address": self.config["settlement"],
+                        "topics": [
+                            "0xdeadbeef" + "0" * 56,
+                            self.config["invoiceId"],
+                            "0x" + "0" * 24 + self.config["agentExecutor"][2:],
+                        ],
+                        "data": "0x" + "".join([
+                            f"{self.decision['amount']:064x}",
+                            f"{self.context['invoice']['paid'] + self.decision['amount']:064x}",
+                            f"{self.context['mandate']['nonce']:064x}",
+                        ]),
+                    }],
+                })
             raise AssertionError(f"Unexpected cast call: {command}")
 
         with patch("verify_agent_intent.keccak_text", return_value="0xdeadbeef" + "0" * 56), patch(
             "verify_agent_intent.cast", side_effect=fake_cast
         ):
-            verify_execution_transaction(proof, "https://rpc.invalid", self.config["agentExecutor"])
+            verify_execution_transaction(proof, "https://rpc.invalid", self.config["agentExecutor"], self.config["settlement"])
+
+    def test_execution_verifier_rejects_receipt_without_settlement_event(self):
+        proof = {
+            "transactionHash": "0x" + "9" * 64,
+            "context": self.context,
+            "decision": self.decision,
+            "contextHash": self.context_hash,
+            "decisionHash": self.decision_hash,
+            "intentDeadline": self.intent_deadline,
+            "signature": self.signature,
+        }
+        args = [
+            self.config["invoiceId"][2:],
+            f"{self.decision['amount']:064x}",
+            f"{self.context['mandate']['nonce']:064x}",
+            f"{self.intent_deadline:064x}",
+            self.context_hash[2:],
+            self.decision_hash[2:],
+            f"{7 * 32:064x}",
+            f"{65:064x}",
+        ]
+        calldata = "0xdeadbeef" + "".join(args) + self.signature[2:] + "0" * 62
+
+        def fake_cast(*command, **kwargs):
+            if command[0] == "tx":
+                return json.dumps({"to": self.config["agentExecutor"], "input": calldata})
+            if command[0] == "receipt":
+                return json.dumps({"status": "0x1", "logs": []})
+            raise AssertionError(f"Unexpected cast call: {command}")
+
+        with patch("verify_agent_intent.keccak_text", return_value="0xdeadbeef" + "0" * 56), patch(
+            "verify_agent_intent.cast", side_effect=fake_cast
+        ):
+            with self.assertRaisesRegex(SystemExit, "no matching SettlementExecuted event"):
+                verify_execution_transaction(
+                    proof, "https://rpc.invalid", self.config["agentExecutor"], self.config["settlement"]
+                )
 
     def test_execution_verifier_rejects_wrong_transaction_parameters(self):
         proof = {
@@ -203,14 +256,30 @@ class VerifyAgentIntentTests(unittest.TestCase):
             if command[0] == "tx":
                 return json.dumps({"to": self.config["agentExecutor"], "input": calldata})
             if command[0] == "receipt":
-                return json.dumps({"status": "0x1"})
+                return json.dumps({
+                    "transactionHash": "0x" + "9" * 64,
+                    "status": "0x1",
+                    "logs": [{
+                        "address": self.config["settlement"],
+                        "topics": [
+                            "0xdeadbeef" + "0" * 56,
+                            self.config["invoiceId"],
+                            "0x" + "0" * 24 + self.config["agentExecutor"][2:],
+                        ],
+                        "data": "0x" + "".join([
+                            f"{self.decision['amount']:064x}",
+                            f"{self.context['invoice']['paid'] + self.decision['amount']:064x}",
+                            f"{self.context['mandate']['nonce']:064x}",
+                        ]),
+                    }],
+                })
             raise AssertionError(f"Unexpected cast call: {command}")
 
         with patch("verify_agent_intent.keccak_text", return_value="0xdeadbeef" + "0" * 56), patch(
             "verify_agent_intent.cast", side_effect=fake_cast
         ):
             with self.assertRaisesRegex(SystemExit, "parameters do not match"):
-                verify_execution_transaction(proof, "https://rpc.invalid", self.config["agentExecutor"])
+                verify_execution_transaction(proof, "https://rpc.invalid", self.config["agentExecutor"], self.config["settlement"])
 
 
 if __name__ == "__main__":
