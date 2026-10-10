@@ -315,6 +315,30 @@ def verify_intent_onchain(rpc, executor, invoice_id, amount, nonce, deadline, co
         raise SystemExit("Executor rejected the signed intent during preflight; no transaction sent")
 
 
+def extract_transaction_hash(raw_tx_output):
+    """Prefer the explicit transactionHash JSON field over other 32-byte hashes."""
+    try:
+        payload = json.loads(raw_tx_output)
+    except (TypeError, json.JSONDecodeError):
+        payload = None
+
+    if isinstance(payload, dict):
+        for field in ("transactionHash", "transaction_hash", "txHash", "hash"):
+            value = payload.get(field)
+            if isinstance(value, str) and HASH_RE.fullmatch(value):
+                return value
+        for container in ("receipt", "transaction"):
+            nested = payload.get(container)
+            if isinstance(nested, dict):
+                for field in ("transactionHash", "transaction_hash", "txHash", "hash"):
+                    value = nested.get(field)
+                    if isinstance(value, str) and HASH_RE.fullmatch(value):
+                        return value
+        return None
+    match = HASH_RE.search(raw_tx_output) if isinstance(raw_tx_output, str) else None
+    return match.group(0) if match else None
+
+
 def validate_successful_receipt(raw_receipt, expected_tx_hash):
     """Require a successful, matching on-chain receipt before claiming EXECUTED."""
     if not isinstance(expected_tx_hash, str) or not HASH_RE.fullmatch(expected_tx_hash):
@@ -604,14 +628,13 @@ def main():
                 write_evidence(evidence, invoice_id, int(nonce))
                 raise SystemExit(f"Signed intent was not confirmed on-chain; evidence saved to {evidence_path}") from exc
 
-            tx_hash_match = HASH_RE.search(tx_output)
-            if not tx_hash_match:
+            tx_hash = extract_transaction_hash(tx_output)
+            if not tx_hash:
                 evidence["status"] = "EXECUTION_FAILED"
                 evidence["executionError"] = "cast send returned no transaction hash"
                 write_evidence(evidence, invoice_id, int(nonce))
                 raise SystemExit(f"No transaction hash returned; evidence saved to {evidence_path}")
 
-            tx_hash = tx_hash_match.group(0)
             evidence["transactionHash"] = tx_hash
             try:
                 receipt_output = cast("receipt", tx_hash, "--rpc-url", rpc, json_output=True)
