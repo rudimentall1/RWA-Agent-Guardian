@@ -50,7 +50,7 @@ def env(name, default=None):
     return value
 
 
-def env_bool(name, default=False):
+def env_bool(name, default=True):
     """Parse an explicit boolean environment flag; reject ambiguous values."""
     value = os.environ.get(name)
     if value is None or value == "":
