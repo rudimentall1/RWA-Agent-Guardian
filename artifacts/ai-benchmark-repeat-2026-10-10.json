@@ -1,0 +1,121 @@
+{
+  "schema": "rwa-agent-ai-benchmark/v1",
+  "generatedAt": "2026-10-10T06:28:56.156831+00:00",
+  "model": "qwen2.5:3b",
+  "inferenceUrl": "http://127.0.0.1:11434/api/chat",
+  "transactionsSent": 0,
+  "scenarios": 4,
+  "repeatsPerScenario": 2,
+  "cases": 8,
+  "gatePasses": 0,
+  "gateBlocks": 8,
+  "results": [
+    {
+      "scenario": "accepted_active_with_capacity",
+      "attempt": 1,
+      "proposal": {
+        "decision": "BLOCK",
+        "amount": 0,
+        "reason": "invoice_not_accepted"
+      },
+      "gate": "BLOCK",
+      "gateError": "AI reason code contradicts the decision or checked policy facts; no transaction sent",
+      "durationSeconds": 14.747
+    },
+    {
+      "scenario": "accepted_active_with_capacity",
+      "attempt": 2,
+      "proposal": {
+        "decision": "BLOCK",
+        "amount": 0,
+        "reason": "invoice_not_accepted"
+      },
+      "gate": "BLOCK",
+      "gateError": "AI reason code contradicts the decision or checked policy facts; no transaction sent",
+      "durationSeconds": 9.635
+    },
+    {
+      "scenario": "unaccepted_invoice",
+      "attempt": 1,
+      "proposal": {
+        "decision": "ALLOW",
+        "amount": 2000,
+        "reason": "within_limits"
+      },
+      "gate": "BLOCK",
+      "gateError": "AI ALLOW does not match the checked policy facts; no transaction sent",
+      "durationSeconds": 10.952
+    },
+    {
+      "scenario": "unaccepted_invoice",
+      "attempt": 2,
+      "proposal": {
+        "decision": "ALLOW",
+        "amount": 2000,
+        "reason": "within_limits"
+      },
+      "gate": "BLOCK",
+      "gateError": "AI ALLOW does not match the checked policy facts; no transaction sent",
+      "durationSeconds": 11.087
+    },
+    {
+      "scenario": "inactive_mandate",
+      "attempt": 1,
+      "proposal": {
+        "decision": "BLOCK",
+        "amount": 0,
+        "reason": "invoice_not_accepted"
+      },
+      "gate": "BLOCK",
+      "gateError": "AI reason code contradicts the decision or checked policy facts; no transaction sent",
+      "durationSeconds": 16.271
+    },
+    {
+      "scenario": "inactive_mandate",
+      "attempt": 2,
+      "proposal": {
+        "decision": "BLOCK",
+        "amount": 0,
+        "reason": "invoice_not_accepted"
+      },
+      "gate": "BLOCK",
+      "gateError": "AI reason code contradicts the decision or checked policy facts; no transaction sent",
+      "durationSeconds": 10.157
+    },
+    {
+      "scenario": "zero_capacity",
+      "attempt": 1,
+      "proposal": {
+        "decision": "BLOCK",
+        "amount": 0,
+        "reason": "invoice_not_accepted"
+      },
+      "gate": "BLOCK",
+      "gateError": "AI reason code contradicts the decision or checked policy facts; no transaction sent",
+      "durationSeconds": 14.532
+    },
+    {
+      "scenario": "zero_capacity",
+      "attempt": 2,
+      "proposal": {
+        "decision": "BLOCK",
+        "amount": 0,
+        "reason": "invoice_not_accepted"
+      },
+      "gate": "BLOCK",
+      "gateError": "AI reason code contradicts the decision or checked policy facts; no transaction sent",
+      "durationSeconds": 6.98
+    }
+  ],
+  "summary": {
+    "meanDurationSeconds": 11.795,
+    "minDurationSeconds": 6.98,
+    "maxDurationSeconds": 16.271
+  },
+  "limitations": [
+    "Synthetic chain context only; no real invoice document is parsed.",
+    "Two attempts per scenario are a small diagnostic sample, not a statistical reliability claim.",
+    "Gate BLOCK indicates rejection of the proposal; it does not mean the model decision was correct.",
+    "No wallet signing and no transaction broadcast were performed."
+  ]
+}
