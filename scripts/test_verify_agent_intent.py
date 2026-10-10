@@ -40,7 +40,7 @@ class VerifyAgentIntentTests(unittest.TestCase):
             "amount": 1000,
             "reason": "Within current on-chain caps",
         }
-        self.model_reason = "exceed max allowed amount"
+        self.model_reason_code = "within_limits"
         self.context_hash = "0x" + "b" * 64
         self.decision_hash = "0x" + "c" * 64
         self.decision_record = {
@@ -52,7 +52,7 @@ class VerifyAgentIntentTests(unittest.TestCase):
             "decision": self.decision["decision"],
             "amount": self.decision["amount"],
             "reason": self.decision["reason"],
-            "modelReason": self.model_reason,
+            "modelReasonCode": self.model_reason_code,
         }
         self.signature = "0x" + "1" * 130
         self.typed_data = build_intent_typed_data(
@@ -74,7 +74,7 @@ class VerifyAgentIntentTests(unittest.TestCase):
             "context": self.context,
             "contextHash": self.context_hash,
             "decision": self.decision,
-            "modelReason": self.model_reason,
+            "modelReasonCode": self.model_reason_code,
             "decisionRecord": self.decision_record,
             "decisionHash": self.decision_hash,
             "intentDeadline": self.intent_deadline,
@@ -127,12 +127,12 @@ class VerifyAgentIntentTests(unittest.TestCase):
 
     def test_verifier_binds_raw_model_reason_into_decision_hash(self):
         evidence = json.loads(json.dumps(self.evidence))
-        evidence["modelReason"] = "different raw model output"
+        evidence["modelReasonCode"] = "no_capacity"
         with patch(
             "verify_agent_intent.keccak_text",
             side_effect=[self.context_hash, self.decision_hash],
         ):
-            with self.assertRaisesRegex(SystemExit, "does not match the recorded model decision"):
+            with self.assertRaisesRegex(SystemExit, "reason code contradicts"):
                 validate_evidence(evidence, self.config)
 
     def test_tampered_context_is_rejected_before_signature_check(self):
