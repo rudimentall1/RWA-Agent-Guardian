@@ -20,6 +20,10 @@ contract InvoiceSettlement {
         ESCALATED
     }
 
+    /// @notice Deployment guard for the ESCALATED dispute lifecycle.
+    /// @dev Bump when a new deployment changes state-machine guarantees.
+    uint256 public constant SETTLEMENT_VERSION = 2;
+
     struct Invoice {
         address issuer;
         address payer;
