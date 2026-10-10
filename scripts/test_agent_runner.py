@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 from agent_runner import (
-    ask_ollama, build_intent_typed_data, decode_words, extract_transaction_hash,
-    load_agent_private_key, parse_ai_decision, validate_config_shape,
-    validate_runtime_config, validate_successful_receipt,
+    ask_ollama, build_intent_typed_data, compact_model_context, decode_words,
+    extract_transaction_hash, load_agent_private_key, parse_ai_decision,
+    validate_config_shape, validate_runtime_config, validate_successful_receipt,
 )
 
 
@@ -164,8 +164,38 @@ class AgentDecisionTests(unittest.TestCase):
         self.assertEqual(sent["model"], "qwen2.5:3b")
         self.assertEqual(sent["format"]["additionalProperties"], False)
         self.assertEqual(sent["options"]["temperature"], 0)
-        self.assertEqual(sent["options"]["num_ctx"], 2048)
-        self.assertEqual(sent["options"]["num_predict"], 128)
+        self.assertEqual(sent["options"]["num_ctx"], 512)
+        self.assertEqual(sent["options"]["num_predict"], 48)
+        self.assertEqual(sent["options"]["num_thread"], 16)
+        self.assertEqual(set(json.loads(sent["messages"][1]["content"]).keys()), {
+            "status", "funded", "paid", "observedAt", "mandateActive",
+            "mandateExpiresAt", "perPaymentLimit", "totalLimit", "spent", "nonce",
+            "maxAllowedAmount",
+        })
+
+    def test_model_context_is_compact_and_does_not_expose_addresses(self):
+        context = {
+            "chainId": 11155111,
+            "executor": "0x" + "a" * 40,
+            "settlement": "0x" + "b" * 40,
+            "token": "0x" + "c" * 40,
+            "invoiceId": "0x" + "d" * 64,
+            "invoice": {"status": 2, "funded": 10000, "paid": 1000, "dueAt": 1900000000},
+            "mandate": {
+                "active": True, "perPaymentLimit": 2000, "totalLimit": 5000,
+                "spent": 1000, "expiresAt": 1800000300, "nonce": 1,
+            },
+            "maxAllowedAmount": 2000,
+            "observedAt": 1799999999,
+        }
+        compact = compact_model_context(context, 2000)
+        self.assertEqual(compact["status"], 2)
+        self.assertEqual(compact["maxAllowedAmount"], 2000)
+        self.assertEqual(compact["observedAt"], 1799999999)
+        self.assertNotIn("chainId", compact)
+        self.assertNotIn("executor", compact)
+        self.assertNotIn("invoiceId", compact)
+        self.assertNotIn("dueAt", compact)
 
     def test_ollama_service_failure_fails_closed(self):
         with patch("agent_runner.urllib.request.urlopen", side_effect=URLError("offline")):
