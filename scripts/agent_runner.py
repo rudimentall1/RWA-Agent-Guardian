@@ -20,12 +20,20 @@ from pathlib import Path
 POLICY_VERSION = "rwa-agent-policy-v1"
 INTENT_DOMAIN_NAME = "RWA Agent Guardian Executor"
 INTENT_DOMAIN_VERSION = "1"
+DECISION_REASON_CODES = (
+    "within_limits",
+    "invoice_not_accepted",
+    "mandate_unavailable",
+    "no_capacity",
+    "model_wait",
+    "model_block",
+)
 DECISION_SCHEMA = {
     "type": "object",
     "properties": {
         "decision": {"type": "string", "enum": ["ALLOW", "WAIT", "BLOCK"]},
         "amount": {"type": "integer", "minimum": 0},
-        "reason": {"type": "string", "maxLength": 48},
+        "reason": {"type": "string", "enum": list(DECISION_REASON_CODES)},
     },
     "required": ["decision", "amount", "reason"],
     "additionalProperties": False,
@@ -196,8 +204,8 @@ def parse_ai_decision(raw, max_allowed):
         raise SystemExit("AI returned an unsupported decision; no transaction sent")
     if type(amount) is not int or amount < 0:
         raise SystemExit("AI amount must be a non-negative integer in token base units; no transaction sent")
-    if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 500:
-        raise SystemExit("AI reason must be a non-empty string of at most 500 characters; no transaction sent")
+    if not isinstance(reason, str) or reason not in DECISION_REASON_CODES:
+        raise SystemExit("AI reason must be one of the allowed policy reason codes; no transaction sent")
     if decision == "ALLOW":
         if max_allowed <= 0 or amount < 1 or amount > max_allowed:
             raise SystemExit(
@@ -222,7 +230,7 @@ def compact_model_context(context, max_allowed):
 
 
 def canonical_decision_reason(context, decision):
-    """Produce a reason grounded in checked policy facts; preserve the model's wording separately."""
+    """Check the model's categorical reason against facts and return human-readable text."""
     invoice = context.get("invoice", {})
     mandate = context.get("mandate", {})
     status = invoice.get("status")
@@ -245,30 +253,40 @@ def canonical_decision_reason(context, decision):
             or not 1 <= decision["amount"] <= max_allowed
         ):
             raise SystemExit("AI ALLOW does not match the checked policy facts; no transaction sent")
-        return "Within current on-chain caps"
-
-    if choice == "BLOCK":
-        if status != 2:
-            return "Invoice is not accepted"
-        return "Model blocked payment"
-
-    if choice == "WAIT":
+        expected_code = "within_limits"
+        human_reason = "Within current on-chain caps"
+    elif choice == "BLOCK":
+        expected_code = "invoice_not_accepted" if status != 2 else "model_block"
+        human_reason = "Invoice is not accepted" if status != 2 else "Model blocked payment"
+    elif choice == "WAIT":
         if not active or type(observed_at) is not int or type(expires_at) is not int or expires_at < observed_at:
-            return "Mandate unavailable or expired"
-        if type(max_allowed) is not int or max_allowed <= 0:
-            return "No spend capacity remains"
-        return "Model chose to wait"
+            expected_code = "mandate_unavailable"
+            human_reason = "Mandate unavailable or expired"
+        elif type(max_allowed) is not int or max_allowed <= 0:
+            expected_code = "no_capacity"
+            human_reason = "No spend capacity remains"
+        else:
+            expected_code = "model_wait"
+            human_reason = "Model chose to wait"
+    else:
+        raise SystemExit("Unsupported decision while deriving canonical reason")
 
-    raise SystemExit("Unsupported decision while deriving canonical reason")
+    if decision.get("reason") != expected_code:
+        raise SystemExit(
+            "AI reason code contradicts the decision or checked policy facts; no transaction sent"
+        )
+    return human_reason
 
 
 def ask_ollama(context, max_allowed, model, url, timeout_seconds=120):
     """Ask a local Ollama model for a bounded decision; fail closed on every invalid response."""
     system_prompt = (
-        "Return one JSON payment decision. If status is not 2, use BLOCK and amount 0. "
-        "If mandateActive is not true, mandateExpiresAt is before observedAt, or maxAllowedAmount is 0, "
-        "use WAIT and amount 0. Otherwise use ALLOW and amount exactly maxAllowedAmount. "
-        "Never exceed that amount. Reason: 2 to 3 words. No other text."
+        "Return one JSON payment decision. If status is not 2, use BLOCK, amount 0, reason invoice_not_accepted. "
+        "If mandateActive is false or mandateExpiresAt is before observedAt, use WAIT, amount 0, "
+        "reason mandate_unavailable. If maxAllowedAmount is 0, use WAIT, amount 0, reason no_capacity. "
+        "Otherwise use ALLOW, amount exactly maxAllowedAmount, reason within_limits. "
+        "You may choose WAIT/model_wait or BLOCK/model_block instead, but amount must be 0. "
+        "Reason must be one of the schema's exact reason codes."
     )
     user_prompt = canonical_json(compact_model_context(context, max_allowed))
     body = {
@@ -607,7 +625,7 @@ def main():
                 raise SystemExit("On-chain invoice or mandate changed during AI inference; no transaction sent")
             if decision["decision"] == "ALLOW" and decision["amount"] > fresh_maximum:
                 raise SystemExit("AI proposal no longer fits the live policy maximum; no transaction sent")
-            model_reason = decision["reason"]
+            model_reason_code = decision["reason"]
             decision["reason"] = canonical_decision_reason(context, decision)
             deadline = min(int(fresh_expiry), now_after_model + 300)
             if deadline <= now_after_model:
@@ -623,7 +641,7 @@ def main():
                 "decision": decision["decision"],
                 "amount": decision["amount"],
                 "reason": decision["reason"],
-                "modelReason": model_reason,
+                "modelReasonCode": model_reason_code,
             }
             decision_hash = keccak_text(canonical_json(decision_record))
             typed_data = build_intent_typed_data(
@@ -657,7 +675,7 @@ def main():
                 "context": context,
                 "contextHash": context_hash,
                 "decision": decision,
-                "modelReason": model_reason,
+                "modelReasonCode": model_reason_code,
                 "decisionRecord": decision_record,
                 "decisionHash": decision_hash,
                 "intentDeadline": int(deadline),
