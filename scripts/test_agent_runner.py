@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 from agent_runner import (
-    ask_ollama, build_intent_typed_data, decode_words, load_agent_private_key,
-    parse_ai_decision, validate_config_shape, validate_runtime_config,
-    validate_successful_receipt,
+    ask_ollama, build_intent_typed_data, decode_words, extract_transaction_hash,
+    load_agent_private_key, parse_ai_decision, validate_config_shape,
+    validate_runtime_config, validate_successful_receipt,
 )
 
 
@@ -196,6 +196,16 @@ class AgentDecisionTests(unittest.TestCase):
             [field["name"] for field in data["types"]["AgentIntent"]],
             ["invoiceId", "amount", "nonce", "deadline", "contextHash", "decisionHash"],
         )
+
+    def test_transaction_hash_uses_explicit_json_field_not_block_hash(self):
+        tx_hash = "0x" + "a" * 64
+        block_hash = "0x" + "b" * 64
+        raw = json.dumps({"blockHash": block_hash, "transactionHash": tx_hash})
+        self.assertEqual(extract_transaction_hash(raw), tx_hash)
+
+    def test_transaction_hash_fails_closed_for_json_without_hash_field(self):
+        raw = json.dumps({"blockHash": "0x" + "b" * 64})
+        self.assertIsNone(extract_transaction_hash(raw))
 
     def test_receipt_requires_success_status_and_matching_hash(self):
         tx_hash = "0x" + "a" * 64
