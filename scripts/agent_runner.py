@@ -221,6 +221,47 @@ def compact_model_context(context, max_allowed):
     }
 
 
+def canonical_decision_reason(context, decision):
+    """Produce a reason grounded in checked policy facts; preserve the model's wording separately."""
+    invoice = context.get("invoice", {})
+    mandate = context.get("mandate", {})
+    status = invoice.get("status")
+    observed_at = context.get("observedAt")
+    expires_at = mandate.get("expiresAt")
+    active = mandate.get("active") is True
+    max_allowed = context.get("maxAllowedAmount", 0)
+    choice = decision.get("decision")
+
+    if choice == "ALLOW":
+        if (
+            status != 2
+            or not active
+            or type(observed_at) is not int
+            or type(expires_at) is not int
+            or expires_at < observed_at
+            or type(max_allowed) is not int
+            or max_allowed <= 0
+            or type(decision.get("amount")) is not int
+            or not 1 <= decision["amount"] <= max_allowed
+        ):
+            raise SystemExit("AI ALLOW does not match the checked policy facts; no transaction sent")
+        return "Within current on-chain caps"
+
+    if choice == "BLOCK":
+        if status != 2:
+            return "Invoice is not accepted"
+        return "Model blocked payment"
+
+    if choice == "WAIT":
+        if not active or type(observed_at) is not int or type(expires_at) is not int or expires_at < observed_at:
+            return "Mandate unavailable or expired"
+        if type(max_allowed) is not int or max_allowed <= 0:
+            return "No spend capacity remains"
+        return "Model chose to wait"
+
+    raise SystemExit("Unsupported decision while deriving canonical reason")
+
+
 def ask_ollama(context, max_allowed, model, url, timeout_seconds=120):
     """Ask a local Ollama model for a bounded decision; fail closed on every invalid response."""
     system_prompt = (
@@ -566,6 +607,8 @@ def main():
                 raise SystemExit("On-chain invoice or mandate changed during AI inference; no transaction sent")
             if decision["decision"] == "ALLOW" and decision["amount"] > fresh_maximum:
                 raise SystemExit("AI proposal no longer fits the live policy maximum; no transaction sent")
+            model_reason = decision["reason"]
+            decision["reason"] = canonical_decision_reason(context, decision)
             deadline = min(int(fresh_expiry), now_after_model + 300)
             if deadline <= now_after_model:
                 raise SystemExit("No valid execution deadline remains after AI inference; no transaction sent")
@@ -580,6 +623,7 @@ def main():
                 "decision": decision["decision"],
                 "amount": decision["amount"],
                 "reason": decision["reason"],
+                "modelReason": model_reason,
             }
             decision_hash = keccak_text(canonical_json(decision_record))
             typed_data = build_intent_typed_data(
@@ -613,6 +657,7 @@ def main():
                 "context": context,
                 "contextHash": context_hash,
                 "decision": decision,
+                "modelReason": model_reason,
                 "decisionRecord": decision_record,
                 "decisionHash": decision_hash,
                 "intentDeadline": int(deadline),
