@@ -24,6 +24,10 @@ The model produced a valid-looking proposal for one simple synthetic case, but f
 - One run per scenario is not a statistical reliability test.
 - No transaction was signed or broadcast.
 
+## Offline regression tests
+
+`scripts/test_ai_benchmark.py` adds three tests for the four-case scenario matrix, gate rejection/reporting, and fail-closed handling of inference exceptions. All three passed locally on Gensyn2 in 0.012 seconds. These tests mock model inference; they do not call Ollama and do not establish model quality.
+
 ## Next step
 
-Add mocked-response regression tests for all four scenarios, then run a small repeated inference sample and report model correctness, gate rejection, and latency separately.
+Run a small repeated inference sample (for example, three repetitions per scenario) and report model correctness, gate rejection, and latency separately. Keep real-document extraction and legal evidence verification as separate workstreams.
