@@ -8,6 +8,7 @@ from urllib.error import URLError
 from agent_runner import (
     ask_ollama, build_intent_typed_data, decode_words, load_agent_private_key,
     parse_ai_decision, validate_config_shape, validate_runtime_config,
+    validate_successful_receipt,
 )
 
 
@@ -195,6 +196,42 @@ class AgentDecisionTests(unittest.TestCase):
             [field["name"] for field in data["types"]["AgentIntent"]],
             ["invoiceId", "amount", "nonce", "deadline", "contextHash", "decisionHash"],
         )
+
+    def test_receipt_requires_success_status_and_matching_hash(self):
+        tx_hash = "0x" + "a" * 64
+        receipt = validate_successful_receipt(
+            json.dumps({
+                "transactionHash": tx_hash,
+                "status": "0x1",
+                "blockNumber": "0x123",
+                "gasUsed": "0x456",
+            }),
+            tx_hash,
+        )
+        self.assertEqual(receipt["transactionHash"], tx_hash)
+        self.assertEqual(receipt["status"], "0x1")
+        self.assertEqual(receipt["blockNumber"], "0x123")
+
+    def test_receipt_rejects_revert_status(self):
+        with self.assertRaisesRegex(SystemExit, "not successful"):
+            validate_successful_receipt(
+                json.dumps({"transactionHash": "0x" + "a" * 64, "status": "0x0"}),
+                "0x" + "a" * 64,
+            )
+
+    def test_receipt_rejects_hash_mismatch(self):
+        with self.assertRaisesRegex(SystemExit, "does not match"):
+            validate_successful_receipt(
+                json.dumps({"transactionHash": "0x" + "b" * 64, "status": "0x1"}),
+                "0x" + "a" * 64,
+            )
+
+    def test_receipt_rejects_missing_status(self):
+        with self.assertRaisesRegex(SystemExit, "no valid status"):
+            validate_successful_receipt(
+                json.dumps({"transactionHash": "0x" + "a" * 64}),
+                "0x" + "a" * 64,
+            )
 
     def test_old_executor_is_rejected_in_signed_intent_mode(self):
         config = AgentRunnerDecodeTests.valid_config()
