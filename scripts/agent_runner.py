@@ -25,7 +25,7 @@ DECISION_SCHEMA = {
     "properties": {
         "decision": {"type": "string", "enum": ["ALLOW", "WAIT", "BLOCK"]},
         "amount": {"type": "integer", "minimum": 0},
-        "reason": {"type": "string", "maxLength": 500},
+        "reason": {"type": "string", "maxLength": 160},
     },
     "required": ["decision", "amount", "reason"],
     "additionalProperties": False,
@@ -208,22 +208,44 @@ def parse_ai_decision(raw, max_allowed):
     return {"decision": decision, "amount": amount, "reason": reason.strip()}
 
 
+def compact_model_context(context, max_allowed):
+    """Expose only payment-policy facts to the model; retain full context in signed evidence."""
+    invoice = context.get("invoice", {})
+    mandate = context.get("mandate", {})
+    return {
+        "status": invoice.get("status"),
+        "funded": invoice.get("funded"),
+        "paid": invoice.get("paid"),
+        "observedAt": context.get("observedAt"),
+        "mandateActive": mandate.get("active"),
+        "mandateExpiresAt": mandate.get("expiresAt"),
+        "perPaymentLimit": mandate.get("perPaymentLimit"),
+        "totalLimit": mandate.get("totalLimit"),
+        "spent": mandate.get("spent"),
+        "nonce": mandate.get("nonce"),
+        "maxAllowedAmount": max_allowed,
+    }
+
+
 def ask_ollama(context, max_allowed, model, url, timeout_seconds=120):
     """Ask a local Ollama model for a JSON proposal; failure or malformed output never falls back to ALLOW."""
     system_prompt = (
-        "You are the decision component of a payment agent. You do not have spending authority. "
-        "Use only the supplied on-chain facts and policy maximum; do not claim to verify legal invoice truth. "
-        "Return exactly one JSON object matching the supplied schema. Choose ALLOW only when the invoice "
-        "status is ACCEPTED, the executor mandate is active and unexpired, and a positive amount is allowed. "
-        "For ALLOW choose an integer amount in the token's smallest base units, from 1 through maxAllowedAmount. "
-        "For WAIT or BLOCK the amount must be 0. Keep reason brief. Never exceed maxAllowedAmount."
+        "Propose one invoice payment decision. You have no spending authority and cannot verify legal truth. "
+        "Use only supplied facts. ALLOW only if status=2, mandateActive=true, mandateExpiresAt>=observedAt "
+        "and maxAllowedAmount>0. ALLOW amount must be 1..maxAllowedAmount in token base units. "
+        "WAIT or BLOCK must use amount=0. Return exactly the JSON schema. Reason: at most 12 words."
     )
-    user_prompt = canonical_json({"onchain_context": context, "maxAllowedAmount": max_allowed})
+    user_prompt = canonical_json(compact_model_context(context, max_allowed))
     body = {
         "model": model,
         "stream": False,
         "format": DECISION_SCHEMA,
-        "options": {"temperature": 0, "num_ctx": 2048, "num_predict": 128},
+        "options": {
+            "temperature": 0,
+            "num_ctx": 512,
+            "num_predict": 48,
+            "num_thread": int(os.environ.get("AGENT_AI_NUM_THREADS", "16")),
+        },
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -421,7 +443,7 @@ def main():
     payment = int(env("AGENT_PAYMENT_AMOUNT", "2000000000"))
     interval = max(1, int(env("AGENT_INTERVAL_SECONDS", "30")))
     max_payments = max(1, int(env("AGENT_MAX_PAYMENTS", "3")))
-    model = os.environ.get("AGENT_AI_MODEL", "qwen2.5:3b")
+    model = os.environ.get("AGENT_AI_MODEL", "qwen2.5:0.5b")
     ai_url = os.environ.get("AGENT_AI_URL", "http://127.0.0.1:11434/api/chat")
     ai_timeout = float(os.environ.get("AGENT_AI_TIMEOUT_SECONDS", "300"))
     payments_sent = 0
