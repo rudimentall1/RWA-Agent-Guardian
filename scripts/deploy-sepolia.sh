@@ -17,6 +17,17 @@ if [[ -z "${PAYER_ADDRESS:-}" || -z "${BENEFICIARY_ADDRESS:-}" ]]; then
   echo "Set PAYER_ADDRESS and BENEFICIARY_ADDRESS in the environment." >&2
   exit 1
 fi
+for address_name in PAYER_ADDRESS BENEFICIARY_ADDRESS; do
+  address_value="${!address_name}"
+  if [[ ! "$address_value" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
+    echo "$address_name must be a valid 20-byte EVM address. No transaction sent." >&2
+    exit 1
+  fi
+  if [[ "${address_value,,}" == "0x0000000000000000000000000000000000000000" ]]; then
+    echo "$address_name must not be the zero address. No transaction sent." >&2
+    exit 1
+  fi
+done
 
 AGENT_OWNER_ADDRESS="${AGENT_OWNER_ADDRESS:-}"
 if [[ ! "$AGENT_OWNER_ADDRESS" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
@@ -35,6 +46,12 @@ fi
 DEPLOYER_ADDRESS="$(cast wallet address --private-key "$KEY")"
 echo "Verified signing account: $DEPLOYER_ADDRESS"
 export SEPOLIA_RPC_URL
+
+CHAIN_ID="$(cast chain-id --rpc-url "$SEPOLIA_RPC_URL")"
+if [[ "$CHAIN_ID" != "11155111" ]]; then
+  echo "RPC chain ID is $CHAIN_ID, expected Sepolia 11155111. No transaction sent." >&2
+  exit 1
+fi
 
 if [[ -z "$TX_MAX_FEE_PER_GAS" || -z "$TX_PRIORITY_FEE_PER_GAS" ]]; then
   GAS_PRICE_HEX="$(cast rpc --rpc-url "$SEPOLIA_RPC_URL" eth_gasPrice)"
