@@ -210,25 +210,55 @@ verify_contract_owner() {
   fi
 }
 
+verify_settlement_version() {
+  local address="$1"
+  local expected_admin="$2"
+  local version actual_admin
+  if ! version="$(cast call "$address" "SETTLEMENT_VERSION()(uint256)" --rpc-url "$SEPOLIA_RPC_URL")"; then
+    echo "FAILED: settlement at $address does not expose SETTLEMENT_VERSION. It is not the current hardened source. No further transaction sent." >&2
+    return 1
+  fi
+  if [[ "$version" != "2" ]]; then
+    echo "FAILED: settlement version is $version; current deployment requires version 2. No further transaction sent." >&2
+    return 1
+  fi
+  if ! actual_admin="$(cast call "$address" "disputeResolverAdmin()(address)" --rpc-url "$SEPOLIA_RPC_URL")"; then
+    echo "FAILED: could not read disputeResolverAdmin() for settlement $address." >&2
+    return 1
+  fi
+  if [[ "${actual_admin,,}" != "${expected_admin,,}" ]]; then
+    echo "FAILED: settlement admin mismatch: onchain=$actual_admin expected=$expected_admin." >&2
+    return 1
+  fi
+}
+
 verify_executor_bindings() {
   local address="$1"
   local expected_settlement="$2"
   local expected_owner="$3"
-  local actual_settlement actual_owner
+  local actual_settlement actual_owner intent_domain
   if ! actual_settlement="$(cast call "$address" "settlement()(address)" --rpc-url "$SEPOLIA_RPC_URL")"; then
-    echo "FAILED: could not read settlement() for existing executor $address." >&2
+    echo "FAILED: could not read settlement() for executor $address." >&2
     return 1
   fi
   if ! actual_owner="$(cast call "$address" "owner()(address)" --rpc-url "$SEPOLIA_RPC_URL")"; then
-    echo "FAILED: could not read owner() for existing executor $address." >&2
+    echo "FAILED: could not read owner() for executor $address." >&2
     return 1
   fi
   if [[ "${actual_settlement,,}" != "${expected_settlement,,}" ]]; then
-    echo "FAILED: existing executor settlement mismatch: onchain=$actual_settlement expected=$expected_settlement." >&2
+    echo "FAILED: executor settlement mismatch: onchain=$actual_settlement expected=$expected_settlement." >&2
     return 1
   fi
   if [[ "${actual_owner,,}" != "${expected_owner,,}" ]]; then
-    echo "FAILED: existing executor owner mismatch: onchain=$actual_owner expected=$expected_owner." >&2
+    echo "FAILED: executor owner mismatch: onchain=$actual_owner expected=$expected_owner." >&2
+    return 1
+  fi
+  if ! intent_domain="$(cast call "$address" "intentDomainSeparator()(bytes32)" --rpc-url "$SEPOLIA_RPC_URL")"; then
+    echo "FAILED: executor $address does not support signed EIP-712 intents. No further transaction sent." >&2
+    return 1
+  fi
+  if [[ ! "$intent_domain" =~ ^0x[0-9a-fA-F]{64}$ || "${intent_domain,,}" == "0x0000000000000000000000000000000000000000000000000000000000000000" ]]; then
+    echo "FAILED: executor returned an invalid EIP-712 domain separator." >&2
     return 1
   fi
 }
@@ -330,6 +360,7 @@ if [[ -n "${EXISTING_SETTLEMENT_ADDRESS:-}" ]]; then
 else
   SETTLEMENT="$(deploy_contract "InvoiceSettlement" "contracts/InvoiceSettlement.sol:InvoiceSettlement" 'constructor(address)' "$DEPLOYER_ADDRESS")"
 fi
+verify_settlement_version "$SETTLEMENT" "$DEPLOYER_ADDRESS"
 if [[ -n "${EXISTING_EXECUTOR_ADDRESS:-}" ]]; then
   EXECUTOR="$(verify_existing_contract "DemoAgentExecutor" "$EXISTING_EXECUTOR_ADDRESS")"
   verify_executor_bindings "$EXECUTOR" "$SETTLEMENT" "$AGENT_OWNER_ADDRESS"
@@ -429,6 +460,7 @@ fi
 
 if [[ -z "${EXISTING_EXECUTOR_ADDRESS:-}" ]]; then
   EXECUTOR="$(deploy_contract "DemoAgentExecutor" "contracts/DemoAgentExecutor.sol:DemoAgentExecutor" 'constructor(address,address)' "$SETTLEMENT" "$AGENT_OWNER_ADDRESS")"
+  verify_executor_bindings "$EXECUTOR" "$SETTLEMENT" "$AGENT_OWNER_ADDRESS"
 fi
 
 DUE_AT="$(printf '%s' "$INVOICE_STATE" | cut -d: -f2)"
