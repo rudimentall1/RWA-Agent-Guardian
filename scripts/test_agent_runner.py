@@ -6,7 +6,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 from agent_runner import (
-    ask_ollama, build_intent_typed_data, compact_model_context, decode_words,
+    ask_ollama, build_intent_typed_data, canonical_decision_reason,
+    compact_model_context, decode_words,
     extract_transaction_hash, load_agent_private_key, parse_ai_decision,
     validate_config_shape, validate_runtime_config, validate_successful_receipt,
 )
@@ -172,6 +173,34 @@ class AgentDecisionTests(unittest.TestCase):
         self.assertEqual(set(json.loads(sent["messages"][1]["content"]).keys()), {
             "status", "observedAt", "mandateActive", "mandateExpiresAt", "maxAllowedAmount",
         })
+
+    def test_canonical_reason_overrides_contradictory_model_explanation(self):
+        context = {
+            "invoice": {"status": 2},
+            "mandate": {"active": True, "expiresAt": 2_000},
+            "observedAt": 1_000,
+            "maxAllowedAmount": 2_000,
+        }
+        proposal = {
+            "decision": "ALLOW",
+            "amount": 2_000,
+            "reason": "exceed max allowed amount",
+        }
+        self.assertEqual(
+            canonical_decision_reason(context, proposal),
+            "Within current on-chain caps",
+        )
+
+    def test_canonical_reason_refuses_allow_when_facts_do_not_permit_it(self):
+        context = {
+            "invoice": {"status": 3},
+            "mandate": {"active": True, "expiresAt": 2_000},
+            "observedAt": 1_000,
+            "maxAllowedAmount": 2_000,
+        }
+        proposal = {"decision": "ALLOW", "amount": 1_000, "reason": "looks fine"}
+        with self.assertRaisesRegex(SystemExit, "does not match"):
+            canonical_decision_reason(context, proposal)
 
     def test_model_context_is_compact_and_does_not_expose_addresses(self):
         context = {
