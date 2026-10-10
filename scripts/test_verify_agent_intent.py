@@ -126,11 +126,19 @@ class VerifyAgentIntentTests(unittest.TestCase):
             validate_evidence(evidence, self.config)
 
     def test_offline_signature_command_uses_typed_data_and_trusted_signer(self):
-        with patch("verify_agent_intent.cast", return_value="true") as mocked_cast:
+        success = f"Validation succeeded. Address {self.config['agentOwner']} signed this message."
+        with patch("verify_agent_intent.cast", return_value=success) as mocked_cast:
             verify_signature_offline(self.typed_data, self.signature, self.config["agentOwner"])
         args = mocked_cast.call_args.args
         self.assertEqual(args[:4], ("wallet", "verify", "--data", "--from-file"))
         self.assertEqual(args[-2:], ("--address", self.config["agentOwner"]))
+
+    def test_offline_signature_verification_rejects_failed_cli_result(self):
+        with patch("verify_agent_intent.cast", return_value="Validation failed"):
+            with self.assertRaisesRegex(SystemExit, "does not recover"):
+                verify_signature_offline(
+                    self.typed_data, self.signature, self.config["agentOwner"]
+                )
 
     def test_execution_verifier_checks_signed_calldata_and_receipt(self):
         proof = {
