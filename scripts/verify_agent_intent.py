@@ -152,6 +152,16 @@ def verify_signature_offline(typed_data, signature, signer):
         raise SystemExit("EIP-712 signature does not recover to the configured agentOwner")
 
 
+def require_version_two_settlement(rpc, settlement):
+    """Refuse to describe proofs against a legacy settlement as current-policy proofs."""
+    try:
+        version = cast("call", settlement, "SETTLEMENT_VERSION()(uint256)", "--rpc-url", rpc)
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit("Configured settlement is legacy and has no version-2 dispute hardening") from exc
+    if version.strip() != "2":
+        raise SystemExit(f"Configured settlement version is {version.strip()}, expected 2")
+
+
 def verify_execution_transaction(proof, rpc, executor):
     tx_hash = proof["transactionHash"]
     try:
@@ -232,16 +242,7 @@ def main():
         raise SystemExit("Could not read RPC chain ID") from exc
     if chain_id != config["chainId"]:
         raise SystemExit("RPC chain ID does not match the trusted deployment config")
-    try:
-        settlement_version = cast(
-            "call", config["settlement"], "SETTLEMENT_VERSION()(uint256)", "--rpc-url", rpc
-        )
-    except subprocess.CalledProcessError as exc:
-        raise SystemExit("Configured settlement is legacy and has no version-2 dispute hardening") from exc
-    if settlement_version.strip() != "2":
-        raise SystemExit(
-            f"Configured settlement version is {settlement_version.strip()}, expected 2"
-        )
+    require_version_two_settlement(rpc, config["settlement"])
     executor = config["agentExecutor"]
     code = cast("code", executor, "--rpc-url", rpc)
     if not code or code.strip().lower() == "0x":
