@@ -129,6 +129,16 @@ for pair in "settlement:$SETTLEMENT" "token:$TOKEN"; do
   fi
 done
 
+if ! SETTLEMENT_VERSION="$(cast call "$SETTLEMENT" "SETTLEMENT_VERSION()(uint256)" --rpc-url "$RPC_URL" 2>/dev/null)"; then
+  echo "Configured settlement predates SETTLEMENT_VERSION=2 and the ESCALATED dispute lifecycle." >&2
+  echo "Use scripts/deploy-sepolia.sh to deploy a fresh current-source settlement and executor. No transaction sent." >&2
+  exit 1
+fi
+if [[ "$SETTLEMENT_VERSION" != "2" ]]; then
+  echo "Configured settlement version is $SETTLEMENT_VERSION, expected 2. No transaction sent." >&2
+  exit 1
+fi
+
 INVOICE_RAW="$(cast call "$SETTLEMENT" "invoices(bytes32)" "$INVOICE_ID" --rpc-url "$RPC_URL")"
 python3 - "$INVOICE_RAW" "$TOKEN" <<'PY'
 import sys
