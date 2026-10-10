@@ -34,6 +34,10 @@ if [[ ! "$AGENT_OWNER_ADDRESS" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
   echo "Set AGENT_OWNER_ADDRESS to the separate agent key address. No transaction sent." >&2
   exit 1
 fi
+if [[ "${AGENT_OWNER_ADDRESS,,}" == "0x0000000000000000000000000000000000000000" ]]; then
+  echo "AGENT_OWNER_ADDRESS must not be the zero address. No transaction sent." >&2
+  exit 1
+fi
 if [[ "${AGENT_OWNER_ADDRESS,,}" == "${PAYER_ADDRESS,,}" ]]; then
   echo "AGENT_OWNER_ADDRESS must differ from PAYER_ADDRESS for the autonomous-agent demo. No transaction sent." >&2
   exit 1
