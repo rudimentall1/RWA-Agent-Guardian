@@ -16,6 +16,7 @@ from pathlib import Path
 from agent_runner import (
     POLICY_VERSION,
     build_intent_typed_data,
+    canonical_decision_reason,
     canonical_json,
     cast,
     keccak_text,
@@ -70,6 +71,13 @@ def validate_evidence(evidence, config):
     if type(maximum) is not int or maximum < 0:
         raise SystemExit("Evidence context has an invalid policy maximum")
     checked_decision = parse_ai_decision(json.dumps(decision), maximum)
+    model_reason = evidence.get("modelReason")
+    if not isinstance(model_reason, str) or not model_reason.strip() or len(model_reason) > 160:
+        raise SystemExit("Evidence is missing the original model reason")
+    expected_reason = canonical_decision_reason(context, checked_decision)
+    if checked_decision["reason"] != expected_reason:
+        raise SystemExit("Decision reason does not match the checked policy facts")
+
     context_hash = keccak_text(canonical_json(context))
     if evidence.get("contextHash") != context_hash:
         raise SystemExit("Context hash mismatch; evidence was changed or is inconsistent")
@@ -83,6 +91,7 @@ def validate_evidence(evidence, config):
         "decision": checked_decision["decision"],
         "amount": checked_decision["amount"],
         "reason": checked_decision["reason"],
+        "modelReason": model_reason,
     }
     if decision_record != expected_record:
         raise SystemExit("Signed decision record does not match the recorded model decision")
