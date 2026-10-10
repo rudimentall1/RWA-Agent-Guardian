@@ -57,6 +57,7 @@
       <h2 id="invoiceHeading">Invoice INV-1001</h2>
       <div class="metric"><span>Face value</span><strong>10,000 dUSD</strong></div>
       <div class="metric"><span>Settlement state</span><strong id="invoiceState">Not loaded</strong></div>
+      <div class="metric"><span>Deployed protections</span><strong id="protectionStatus">Not checked</strong></div>
       <div class="metric"><span>Escrow funded</span><strong id="funded">Not loaded</strong></div>
       <div class="metric"><span>Already paid</span><strong id="paid">Not loaded</strong></div>
       <div class="metric"><span>Payer token balance</span><strong id="balance">Not loaded</strong></div>
@@ -64,6 +65,7 @@
       <div class="metric"><span>Hash preimage check</span><strong id="termsCheck">Not checked</strong></div>
       <div class="metric"><span>Issuer attestation</span><strong id="issuerAttestation">Not checked</strong></div>
       <p>The settlement contract computes a canonical commitment over the invoice ID, payer, beneficiary, token, face value, due date, and document hash. The check above recomputes that commitment from the public onchain fields. This demo uses synthetic Sepolia assets and is not a legal receivable.</p>
+      <p>The protection check reads the deployed contract APIs, not this repository's source. AI intents require settlement version 2 and an executor exposing the EIP-712 intent interface.</p>
       <div class="metric"><span>Agent mandate</span><strong id="mandateState">Not loaded</strong></div>
       <div class="metric"><span>Per-payment limit</span><strong id="perLimit">Not loaded</strong></div>
       <div class="metric"><span>Aggregate limit</span><strong id="totalLimit">Not loaded</strong></div>
@@ -135,6 +137,7 @@
   const settlementAbi = [
     "function invoices(bytes32) view returns (address issuer,address payer,address beneficiary,address token,uint128 faceValue,uint128 funded,uint128 paid,uint64 dueAt,bytes32 termsHash,uint8 status)",
     "function mandates(bytes32,address) view returns (uint128 perPaymentLimit,uint128 totalLimit,uint128 spent,uint64 expiresAt,uint64 nonce,bool active)",
+    "function SETTLEMENT_VERSION() view returns (uint256)",
     "function invoiceDocumentHashes(bytes32) view returns (bytes32)",
     "function issuerNonces(address) view returns (uint256)",
     "function invoiceAttestationDigests(bytes32) view returns (bytes32)",
@@ -159,6 +162,7 @@
   ];
   const executorAbi = [
     "function execute(bytes32,uint128,uint64,uint64)",
+    "function intentDomainSeparator() view returns (bytes32)",
     "error Unauthorized()"
   ];
   let provider, signer, userAddress, token, settlement, executor, lastCheckedAmount;
@@ -335,6 +339,28 @@
     const mandateStatus = !mandate.active ? "Revoked" :
       (mandate.expiresAt < now ? "Expired" : (limitReached ? "Limit reached" : "Active"));
     $("invoiceState").textContent = invoiceLabel;
+
+    let settlementCapability = "Version check failed";
+    try {
+      const version = await readSettlement.SETTLEMENT_VERSION();
+      settlementCapability = BigInt(version) === 2n ?
+        "Settlement v2 (ESCALATED)" : "Settlement v" + String(version) + " (legacy/unknown)";
+    } catch (error) {
+      settlementCapability = window.RWA_PREFLIGHT_POLICY.isUnsupportedReadError(error) ?
+        "Legacy settlement (no version marker)" : "Settlement version could not be checked";
+    }
+    let executorCapability = "Intent API check failed";
+    try {
+      const readExecutor = new ethers.Contract(cfg.agentExecutor, executorAbi, readProvider);
+      const domain = await readExecutor.intentDomainSeparator();
+      executorCapability = domain !== ethers.ZeroHash ?
+        "EIP-712 intents enabled" : "Intent domain is invalid";
+    } catch (error) {
+      executorCapability = window.RWA_PREFLIGHT_POLICY.isUnsupportedReadError(error) ?
+        "Legacy executor (no intent API)" : "Executor capabilities could not be checked";
+    }
+    $("protectionStatus").textContent = settlementCapability + " · " + executorCapability;
+
     $("funded").textContent = formatDUSD(inv.funded) + " dUSD";
     $("paid").textContent = formatDUSD(inv.paid) + " dUSD";
     $("balance").textContent = formatDUSD(balance) + " dUSD";
