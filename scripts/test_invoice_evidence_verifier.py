@@ -50,6 +50,20 @@ class InvoiceEvidenceVerifierTests(unittest.TestCase):
         self.assertEqual(report["status"], "INCOMPLETE")
         self.assertIn("due_date", report["missingEvidenceFields"])
 
+
+    def test_missing_acceptance_is_incomplete_not_a_false_mismatch(self):
+        del self.evidence["accepted"]
+        report = verifier.verify(self.extraction, self.evidence)
+        self.assertEqual(report["status"], "INCOMPLETE")
+        self.assertIn("accepted", report["missingEvidenceFields"])
+        self.assertNotIn("debtor_acceptance_not_confirmed", report["errors"])
+
+    def test_non_hex_source_hash_is_rejected(self):
+        self.extraction["source"]["sha256"] = "z" * 64
+        report = verifier.verify(self.extraction, self.evidence)
+        self.assertEqual(report["status"], "MISMATCH")
+        self.assertIn("missing_or_invalid_source_sha256", report["errors"])
+
     def test_unconfirmed_acceptance_fails_closed(self):
         self.evidence["accepted"] = False
         report = verifier.verify(self.extraction, self.evidence)
